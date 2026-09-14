@@ -1,6 +1,6 @@
 # Custom model token limits
 
-Refs: [#3854](https://github.com/decolua/9router/issues/3854), [#1294](https://github.com/decolua/9router/issues/1294), [PR #1347](https://github.com/decolua/9router/pull/1347), [#3032](https://github.com/decolua/9router/issues/3032), [#3750](https://github.com/decolua/9router/issues/3750), [#3812](https://github.com/decolua/9router/issues/3812).
+Refs: [#3854](https://github.com/freezeraize-star/9router/issues/3854), [#1294](https://github.com/freezeraize-star/9router/issues/1294), [PR #1347](https://github.com/freezeraize-star/9router/pull/1347), [#3032](https://github.com/freezeraize-star/9router/issues/3032), [#3750](https://github.com/freezeraize-star/9router/issues/3750), [#3812](https://github.com/freezeraize-star/9router/issues/3812).
 
 ## Goal
 

@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="../images/9router.png?1" alt="VansRouter Dashboard" width="800"/>
+  <img src="../images/9router.png?1" alt="Freezeraize Dashboard" width="800"/>
 
-  # VansRouter - 免费 AI 路由器
+  # Freezeraize - 免费 AI 路由器
 
   **永不停歇的编程体验。智能回退，自动路由到免费和廉价的 AI 模型。**
 
@@ -11,16 +11,16 @@
     <img src="../public/providers/openclaw.webp" alt="OpenClaw" width="80"/>
   </p>
 
-  [![npm](https://img.shields.io/npm/v/vansrouter.svg)](https://www.npmjs.com/package/vansrouter)
-  [![Downloads](https://img.shields.io/npm/dm/vansrouter.svg)](https://www.npmjs.com/package/vansrouter)
-  [![License](https://img.shields.io/npm/l/vansrouter.svg)](https://github.com/Vanszs/VansRouter/blob/main/LICENSE)
+  [![npm](https://img.shields.io/npm/v/freezeraize.svg)](https://www.npmjs.com/package/freezeraize)
+  [![Downloads](https://img.shields.io/npm/dm/freezeraize.svg)](https://www.npmjs.com/package/freezeraize)
+  [![License](https://img.shields.io/npm/l/freezeraize.svg)](https://github.com/freezeraize-star/Freezeraize/blob/main/LICENSE)
 
-  [🚀 快速开始](#-quick-start) • [💡 特性](#-key-features) • [📖 设置](#-setup) • [🌐 网站](https://vansrouter.com)
+  [🚀 快速开始](#-quick-start) • [💡 特性](#-key-features) • [📖 设置](#-setup) • [🌐 网站](https://freezeraize.com)
 </div>
 
 ---
 
-## 🤔 为什么选择 VansRouter？
+## 🤔 为什么选择 Freezeraize？
 
 **停止浪费金钱和触碰限制：**
 
@@ -93,7 +93,7 @@ Claude Code/Codex/Gemini CLI/OpenClaw/Cursor/Cline 设置:
 
 **替代方案：从源码运行（此仓库）：**
 
-此仓库包是私有的（`vansrouter-app`），因此源码/Docker 执行是预期的本地开发路径。
+此仓库包是私有的（`freezeraize-app`），因此源码/Docker 执行是预期的本地开发路径。
 
 ```bash
 cp .env.example .env
@@ -945,7 +945,7 @@ Model: cc/claudeus-4-6
 
 ```bash
 # Clone and install
-git clone https://github.com/decolua/9router.git
+git clone https://github.com/freezeraize-star/9router.git
 cd 9router
 npm install
 npm run build
@@ -1254,8 +1254,8 @@ OPENAI_API_KEY="your-cloud-key" bash tester/security/test-cloud-openai-compatibl
 ## 📧 支持
 
 - **网站**：[9router.com](https://9router.com)
-- **GitHub**：[github.com/decolua/9router](https://github.com/decolua/9router)
-- **问题**：[github.com/decolua/9router/issues](https://github.com/decolua/9router/issues)
+- **GitHub**：[github.com/freezeraize-star/9router](https://github.com/freezeraize-star/9router)
+- **问题**：[github.com/freezeraize-star/9router/issues](https://github.com/freezeraize-star/9router/issues)
 
 ---
 
@@ -1263,13 +1263,13 @@ OPENAI_API_KEY="your-cloud-key" bash tester/security/test-cloud-openai-compatibl
 
 感谢所有帮助让 9Router 变得更好的贡献者！
 
-[![Contributors](https://contrib.rocks/image?repo=decolua/9router&max=100&columns=20&anon=1)](https://github.com/decolua/9router/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=freezeraize-star/9router&max=100&columns=20&anon=1)](https://github.com/freezeraize-star/9router/graphs/contributors)
 
 ---
 
 ## 📊 Star 图表
 
-[![Star Chart](https://starchart.cc/decolua/9router.svg?variant=adaptive)](https://starchart.cc/decolua/9router)
+[![Star Chart](https://starchart.cc/freezeraize-star/9router.svg?variant=adaptive)](https://starchart.cc/freezeraize-star/9router)
 
 ### 如何贡献
 
@@ -1279,7 +1279,7 @@ OPENAI_API_KEY="your-cloud-key" bash tester/security/test-cloud-openai-compatibl
 4 推送到分支（`git push origin feature/amazing-feature`）
 5. 打开 Pull Request
 
-详细指南请参阅 [Pull Requests](https://github.com/decolua/9router/pulls)。
+详细指南请参阅 [Pull Requests](https://github.com/freezeraize-star/9router/pulls)。
 
 ---
 

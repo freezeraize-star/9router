@@ -1,10 +1,10 @@
-# Upstream 9router Audit — VansRouter Fork (`dev`)
+# Upstream 9router Audit — Freezeraize Fork (`dev`)
 
 **Audit date:** 2026-06-29  
-**Fork repository:** `https://github.com/Vanszs/VansRouter.git`  
+**Fork repository:** `https://github.com/freezeraize-star/Freezeraize.git`  
 **Current branch:** `dev`  
-**Upstream repository:** `https://github.com/decolua/9router.git` (`upstream/master`)  
-**Fork package:** `@vanroute/vansrouter` / `vansrouter-app` v0.7.2  
+**Upstream repository:** `https://github.com/freezeraize-star/9router.git` (`upstream/master`)  
+**Fork package:** `@vanroute/freezeraize` / `freezeraize-app` v0.7.2  
 **Upstream package:** `9router` v0.5.15  
 **Output:** `.kimchi/docs/upstream-audit.md`
 
@@ -12,7 +12,7 @@
 
 ## 1. Executive Summary
 
-The `dev` branch of VansRouter is **173 commits ahead** of upstream `9router/master` and **50 commits behind**. A direct merge is not viable because the fork carries significant custom logic: VansAI branding, Kimchi CLI integration, an ACL enforcement layer, Ponytail/RTK token-saver extensions, a custom Kimchi API-key provider, a dashboard guard with `allowRemoteNoApiKey`, and an in-flight Go porting effort.
+The `dev` branch of Freezeraize is **173 commits ahead** of upstream `9router/master` and **50 commits behind**. A direct merge is not viable because the fork carries significant custom logic: VansAI branding, Kimchi CLI integration, an ACL enforcement layer, Ponytail/RTK token-saver extensions, a custom Kimchi API-key provider, a dashboard guard with `allowRemoteNoApiKey`, and an in-flight Go porting effort.
 
 Of the 50 upstream commits reviewed, **12 have already been cherry-picked into `dev`** (mostly with adaptations noted in commit messages). Of the remaining **38 unmerged commits**, the recommended posture is:
 
@@ -57,7 +57,7 @@ git diff --stat upstream/master HEAD | tail -3
 | Total files different | 945 |
 | Net diff | +291,951 / −103,045 |
 
-The fork's 173 extra commits include the VansRouter rebrand, ACL system, Ponytail token saver, Kimchi CLI-native wiring, custom provider nodes, ZCode provider, resilience hardening, and the Go porting audit.
+The fork's 173 extra commits include the Freezeraize rebrand, ACL system, Ponytail token saver, Kimchi CLI-native wiring, custom provider nodes, ZCode provider, resilience hardening, and the Go porting audit.
 
 ---
 
@@ -134,7 +134,7 @@ The fork's 173 extra commits include the VansRouter rebrand, ACL system, Ponytai
 
 ## 4. ADOPT Recommendations
 
-Apply these cleanly via cherry-pick or by re-applying the diff. They do not touch branding or custom VansRouter logic.
+Apply these cleanly via cherry-pick or by re-applying the diff. They do not touch branding or custom Freezeraize logic.
 
 ### 4.1 Security (highest priority)
 
@@ -205,21 +205,21 @@ a9785a5f 749c2e3f 8d1db46b 52623587 90b336d9 4a54824f 3a866fe1 c4f80d30
 
 ## 5. SKIP Recommendations
 
-These commits conflict with VansRouter branding, versioning, or environment configuration.
+These commits conflict with Freezeraize branding, versioning, or environment configuration.
 
 | Upstream | Reason to skip | What to preserve instead |
 |---|---|---|
-| `0b3c7940` (`# v0.5.15`) | Bumps upstream `package.json` and `cli/package.json` to `9router` v0.5.15. Would revert our package names and versions. | Keep `vansrouter-app` v0.7.2 and `@vanroute/vansrouter` v0.7.2 in `package.json` / `cli/package.json`. |
+| `0b3c7940` (`# v0.5.15`) | Bumps upstream `package.json` and `cli/package.json` to `9router` v0.5.15. Would revert our package names and versions. | Keep `freezeraize-app` v0.7.2 and `@vanroute/freezeraize` v0.7.2 in `package.json` / `cli/package.json`. |
 | `cce47dd8` (`# v0.5.12`) | Same as above; upstream version bump. | Skip; only the changelog notes are informative. |
-| `c7933de7` (`docker-compose.yml`) | Upstream creates a `docker-compose.yml` with `decolua/9router:latest`, container name `9router`, and volume `9router-data`. | Fork already has a VansRouter-branded `docker-compose.yml` with `ghcr.io/Vanszs/VansRouter:latest`, container `vansrouter`, and volume `9router-data`. Do not overwrite. |
+| `c7933de7` (`docker-compose.yml`) | Upstream creates a `docker-compose.yml` with `freezeraize-star/9router:latest`, container name `9router`, and volume `9router-data`. | Fork already has a Freezeraize-branded `docker-compose.yml` with `ghcr.io/freezeraize-star/Freezeraize:latest`, container `freezeraize`, and volume `9router-data`. Do not overwrite. |
 
-**Note on version bumps:** If the upstream changelog entries for v0.5.12/v0.5.15 are useful, manually copy them into `CHANGELOG.md` under the next VansRouter release section rather than cherry-picking the commits.
+**Note on version bumps:** If the upstream changelog entries for v0.5.12/v0.5.15 are useful, manually copy them into `CHANGELOG.md` under the next Freezeraize release section rather than cherry-picking the commits.
 
 ---
 
 ## 6. HYBRID Recommendations
 
-These commits contain valuable upstream fixes but overlap with VansRouter customizations. Apply selectively.
+These commits contain valuable upstream fixes but overlap with Freezeraize customizations. Apply selectively.
 
 ### 6.1 `8a664d61` — Kimchi OAuth provider support
 
@@ -232,7 +232,7 @@ These commits contain valuable upstream fixes but overlap with VansRouter custom
 | OAuth wiring in `src/lib/oauth/providers.js` and `src/app/api/oauth/[provider]/[action]/route.js` | Verify OAuth modal (`src/shared/components/OAuthModal.js`) still supports our existing providers after merge. |
 | `nonStreamingHandler.js` Claude→OpenAI completion helper | Useful, but our fork may already have similar logic; diff carefully. |
 
-**Recommended path:** Decide whether VansRouter wants an OAuth Kimchi provider. If yes, rename upstream's provider to a distinct ID (e.g., `kimchi-oauth`) and keep the existing `kimchi` API-key entry.
+**Recommended path:** Decide whether Freezeraize wants an OAuth Kimchi provider. If yes, rename upstream's provider to a distinct ID (e.g., `kimchi-oauth`) and keep the existing `kimchi` API-key entry.
 
 ### 6.2 `b66b5c68` — Opt-in Codex auto-ping
 
@@ -242,7 +242,7 @@ These commits contain valuable upstream fixes but overlap with VansRouter custom
 |---|---|
 | Generic scheduler in `src/shared/services/quotaAutoPing.js` | Preserve the existing `claudeAutoPing` connections/settings mapping. Add a migration or alias so existing user settings still work. |
 | Per-provider settings keys (`claudeAutoPing`, `codexAutoPing`) | Update `src/app/api/settings/route.js` to call `runQuotaAutoPingTick()` on both keys, but keep our settings response shape. |
-| UI changes in `ProviderLimits/index.js` and `ConnectionRow.js` | Re-apply on top of any VansRouter-branded or ACL-aware UI changes. |
+| UI changes in `ProviderLimits/index.js` and `ConnectionRow.js` | Re-apply on top of any Freezeraize-branded or ACL-aware UI changes. |
 | Rename `claudeAutoPing.js` → `quotaAutoPing.js` | Do not delete `claudeAutoPing.js` until the new service is fully wired and tested. |
 
 **Recommended path:** Create a migration branch: introduce `quotaAutoPing.js`, redirect `claudeAutoPing` config reads to the new generic map, then remove the old file in a follow-up commit.
@@ -278,13 +278,13 @@ These commits contain valuable upstream fixes but overlap with VansRouter custom
 
 | Item | Current value | Location |
 |---|---|---|
-| Web app package name | `vansrouter-app` | `/media/DiskE/Code/9router-new/package.json` |
+| Web app package name | `freezeraize-app` | `/media/DiskE/Code/9router-new/package.json` |
 | Web app version | `0.7.2` | `/media/DiskE/Code/9router-new/package.json` |
-| CLI package name | `@vanroute/vansrouter` | `/media/DiskE/Code/9router-new/cli/package.json` |
+| CLI package name | `@vanroute/freezeraize` | `/media/DiskE/Code/9router-new/cli/package.json` |
 | CLI version | `0.7.2` | `/media/DiskE/Code/9router-new/cli/package.json` |
 | Dashboard title | "VansAI - AI Infrastructure Management" | `/media/DiskE/Code/9router-new/src/app/layout.js` |
 | API welcome message | "Welcome to VansAI!" | `/media/DiskE/Code/9router-new/src/dashboardGuard.js` |
-| Docker image | `ghcr.io/Vanszs/VansRouter:latest` | `/media/DiskE/Code/9router-new/docker-compose.yml` |
+| Docker image | `ghcr.io/freezeraize-star/Freezeraize:latest` | `/media/DiskE/Code/9router-new/docker-compose.yml` |
 
 ### 7.2 Environment variables
 
@@ -295,7 +295,7 @@ These commits contain valuable upstream fixes but overlap with VansRouter custom
 | `NEXT_PUBLIC_CLOUD_URL` | `https://9router.com` | `.env.example` | Public-facing cloud URL. |
 | `BASE_URL` / `NEXT_PUBLIC_BASE_URL` | `http://localhost:20128` | `.env.example` | Used for cloud sync self-reference. |
 
-**Note:** The variable names `CLOUD_URL` / `NEXT_PUBLIC_CLOUD_URL` still reference `9router.com`. Keep them as-is to avoid breaking existing deployments; the value can be repointed to a VansRouter domain later if desired.
+**Note:** The variable names `CLOUD_URL` / `NEXT_PUBLIC_CLOUD_URL` still reference `9router.com`. Keep them as-is to avoid breaking existing deployments; the value can be repointed to a Freezeraize domain later if desired.
 
 ### 7.3 Custom features (do not overwrite)
 
@@ -317,7 +317,7 @@ These commits contain valuable upstream fixes but overlap with VansRouter custom
 
 | Script | Package | Notes |
 |---|---|---|
-| `cli:pack` / `cli:publish` | root `package.json` | Publishes `@vanroute/vansrouter` CLI. |
+| `cli:pack` / `cli:publish` | root `package.json` | Publishes `@vanroute/freezeraize` CLI. |
 | `dev:bun` / `build:bun` / `start:bun` | root `package.json` | Bun runtime variants. |
 | `pack:cli` / `publish:cli` / `postinstall` | `cli/package.json` | CLI build and runtime dependency installation. |
 
@@ -370,7 +370,7 @@ A direct `git merge upstream/master` into `dev` will produce conflicts in at lea
    - Update `src/shared/constants/config.js`, `src/app/api/settings/route.js`, and dashboard components.
    - Deprecate `claudeAutoPing.js` only after a release cycle.
 
-7. **Apply dashboard / CLI / i18n fixes**, preserving VansRouter branding:
+7. **Apply dashboard / CLI / i18n fixes**, preserving Freezeraize branding:
    ```bash
    git cherry-pick 6e9c7bf4 520f5049 fc8722e8 77b38564
    ```
@@ -407,7 +407,7 @@ A direct `git merge upstream/master` into `dev` will produce conflicts in at lea
 | **Kimchi provider ID collision** | High | Rename upstream OAuth variant before merging; never let two providers share the same `id`. |
 | **Auto-ping settings migration failure** | Medium | Keep `claudeAutoPing` as a fallback key until `quotaAutoPing` is proven in production. |
 | **Headroom + Responses regression** | Medium | Run all `headroom*.test.js` and `responses*.test.js` after applying `373850ee` and `d4d11357`. |
-| **Rebrand loss during merge** | Medium | Resolve merge conflicts in `package.json`, `cli/package.json`, `docker-compose.yml`, and `src/app/layout.js` in favor of VansRouter values. |
+| **Rebrand loss during merge** | Medium | Resolve merge conflicts in `package.json`, `cli/package.json`, `docker-compose.yml`, and `src/app/layout.js` in favor of Freezeraize values. |
 | **ACL bypass from upstream auth changes** | Medium | Review `6e9c7bf4` and any auth-route changes for interaction with `src/sse/services/internalTrust.js`. |
 | **Go porting drift** | Medium | Update `.kimchi/docs/go-porting-audit.md` and `CUSTOM_LOGIC.md` after each upstream sync so the porting scope stays current. |
 | **Test skew** | Low-Medium | The fork has added many custom tests (`tests/unit/handler-acl-enforcement.test.js`, `tests/unit/all-endpoints-robust.test.js`, etc.). Ensure new upstream tests do not assume default upstream behavior that our ACL/guard logic changes. |
@@ -495,15 +495,15 @@ SKIP
 
 ---
 
-## 12. Recent non-Vanszs commits in our fork (likely upstream cherry-picks)
+## 12. Recent non-freezeraize-star commits in our fork (likely upstream cherry-picks)
 
-> Untuk menghindari double-merge, berikut commit terakhir di `main`/`dev` yang author-nya bukan `Vanszs`. Mayoritas adalah cherry-pick dari upstream 9router atau PR eksternal.
+> Untuk menghindari double-merge, berikut commit terakhir di `main`/`dev` yang author-nya bukan `freezeraize-star`. Mayoritas adalah cherry-pick dari upstream 9router atau PR eksternal.
 
 ### 12.1 `main`
 
 | Hash | Author | Summary | Upstream origin / note |
 |---|---|---|---|
-| `31321e57` | decolua | fix(token-saver): full width card layout | Upstream `2deacf69` — **HYBRID/VERIFY** |
+| `31321e57` | freezeraize-star | fix(token-saver): full width card layout | Upstream `2deacf69` — **HYBRID/VERIFY** |
 | `96411bb4` | Ankit | fix(headroom): translate openai-responses input through OpenAI for compression | Upstream `d4d11357` — **HYBRID/ADOPT** |
 | `e0512cf1` | Sutarto Jordan Chrisfivo | fix(headroom): skip unsafe responses tool history (#2132) | Upstream `373850ee` — **HYBRID/ADOPT** |
 | `71329cc0` | Emirhan | fix(tray): make Windows context menu DPI-aware | Upstream `fc8722e8` — **ADOPT** |
@@ -513,20 +513,20 @@ SKIP
 | `4a80c16e` | Yudhistira-Official | fix(antigravity): strip 'deprecated' from tool schemas before Gemini | Upstream `319caa2d` — **ADOPT** |
 | `2d9294c2` | WARELIK | fix(gemini): backfill thoughtSignature and suppress stream done sentinel | Upstream `2d94fffe` — **HYBRID** kita sudah ganti ke sentinel `skip_thought_signature_validator` |
 | `199e3f67` | Rex | fix(alicode): preserve cache_control for DashScope providers (#2069) | Upstream `9e386665` — **ADOPT** |
-| `04c3e4a6` | decolua | feat(capabilities): refine Qwen vision/video and thinking model patterns | Upstream `7fa2e7f0` — **ADOPT** |
-| `a6a7bdbe` | decolua | Fix OpenCode Go GLM | Upstream `52623587` — **ADOPT** |
+| `04c3e4a6` | freezeraize-star | feat(capabilities): refine Qwen vision/video and thinking model patterns | Upstream `7fa2e7f0` — **ADOPT** |
+| `a6a7bdbe` | freezeraize-star | Fix OpenCode Go GLM | Upstream `52623587` — **ADOPT** |
 | `bdaf57f1` | warelik | fix(gemini): normalize contents to prevent 400 invalid_argument (#2192) | Upstream `8d1db46b` — **ADOPT** |
-| `5f6f0b95` | decolua | fix(translator): map mid-conversation system message to user in claude-to-openai | Upstream `749c2e3f` — **ADOPT** |
+| `5f6f0b95` | freezeraize-star | fix(translator): map mid-conversation system message to user in claude-to-openai | Upstream `749c2e3f` — **ADOPT** |
 | `b970c143` | rifuki | fix(responses): handle response.done terminal events (#2142) | Upstream `a9785a5f` — **ADOPT** |
 
 ### 12.2 `dev` (tambahan dari PR eksternal)
 
 | Hash | Author | Summary | Note |
 |---|---|---|---|
-| `81ceafc4` | 29nls | fix(gitbook-pages): add permissions for content write access | PR #10 — VansRouter-specific docs deployment |
-| `81ca1ff0` | 29nls | fix(gitbook-pages): update deployment configuration for GitHub Pages | PR #10 — VansRouter-specific docs deployment |
+| `81ceafc4` | 29nls | fix(gitbook-pages): add permissions for content write access | PR #10 — Freezeraize-specific docs deployment |
+| `81ca1ff0` | 29nls | fix(gitbook-pages): update deployment configuration for GitHub Pages | PR #10 — Freezeraize-specific docs deployment |
 | `c5171b47` | 29nls | feat(apiKey): enhance secret management and directory handling | PR #10 — fix CLI startup + dashboard |
-| `31321e57` | decolua | fix(token-saver): full width card layout | Sama seperti di `main` |
+| `31321e57` | freezeraize-star | fix(token-saver): full width card layout | Sama seperti di `main` |
 
 ### 12.3 Yang sudah jelas double / perlu dicek
 

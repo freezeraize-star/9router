@@ -1,13 +1,13 @@
-# VansRouter Docker Compose
+# Freezeraize Docker Compose
 # Usage:
 #   1. cp .env.example .env && nano .env
 #   2. docker compose up -d
 #   3. Open http://localhost:20128
 
 services:
-  vansrouter:
-    image: ghcr.io/vanszs/vansrouter:latest
-    container_name: vansrouter
+  freezeraize:
+    image: ghcr.io/freezeraize-star/freezeraize:latest
+    container_name: freezeraize
     restart: unless-stopped
     ports:
       - "${PORT:-20128}:20128"

@@ -47,9 +47,9 @@ pm2 save
 
 ---
 
-## 6. Custom Fitur VansRouter Wajib Dijaga Saat Sync Upstream
+## 6. Custom Fitur Freezeraize Wajib Dijaga Saat Sync Upstream
 
-Daftar ini **harus diverifikasi** setiap kali melakukan cherry-pick atau merge dari `decolua/9router`. Gunakan:
+Daftar ini **harus diverifikasi** setiap kali melakukan cherry-pick atau merge dari `freezeraize-star/9router`. Gunakan:
 
 ```bash
 git diff <v0.9.0-commit> dev --stat  # pastikan tidak ada file custom hilang
@@ -73,7 +73,7 @@ git diff <v0.9.0-commit> dev --stat  # pastikan tidak ada file custom hilang
 | 14 | Terse caveman mode | `open-sse/rtk/caveman.js` |
 | 15 | Proxy pool selection (`pickProxyPoolId`) | `src/sse/services/auth.js` |
 | 16 | Connection proxy layer (`connectionProxy`) | `src/lib/network/connectionProxy.js` |
-| 17 | Sidebar VansRouter brand | `src/shared/components/Sidebar.js` |
+| 17 | Sidebar Freezeraize brand | `src/shared/components/Sidebar.js` |
 | 18 | Provider detail connections pagination (10/page) | `src/app/(dashboard)/dashboard/providers/[id]/connectionsPagination.js` |
 | 19 | ACL filter di `GET /v1/models` (validate key + filter providers) | `src/app/api/v1/models/route.js` |
 
@@ -86,7 +86,7 @@ Hybrid **tidak boleh** cherry-pick file penuh dari upstream. Port hanya blok per
 - `custom-server.js` tetap menjadi entrypoint Docker; jangan menghapus trusted peer header dan proxy-IP handling.
 - `pnpm run build` tetap menyalin `public`, `.next/static`, `src/`, serta shim/runtime yang dibuat `scripts/build.js`.
 - Jangan mengubah nama volume Docker `9router-data`; perubahan memerlukan migrasi dan verifikasi database eksplisit.
-- Fitur VansRouter pada tabel ini harus tetap aktif; verifikasi handler, bukan sekadar import atau nama simbol.
+- Fitur Freezeraize pada tabel ini harus tetap aktif; verifikasi handler, bukan sekadar import atau nama simbol.
 - Hybrid security patch wajib mempertahankan `allowRemoteNoApiKey`, ACL, trusted internal call, dan multi-account compatible provider.
 - Provider/model hybrid wajib mempertahankan registry lokal, executor khusus, proxy layer, fallback account, dan test baseline.
 
@@ -100,7 +100,7 @@ npx vitest run tests/unit/post-merge-verification.test.js
 
 ### ⚠️ Pelajaran: ACL Block di `GET /v1/models` Pernah Hilang
 
-Saat cherry-pick dari `decolua/9router` v0.5.31–v0.5.35 (commit `5f35d7d42`), upstream **dropped seluruh blok ACL** di handler `GET` `src/app/api/v1/models/route.js`:
+Saat cherry-pick dari `freezeraize-star/9router` v0.5.31–v0.5.35 (commit `5f35d7d42`), upstream **dropped seluruh blok ACL** di handler `GET` `src/app/api/v1/models/route.js`:
 - `extractApiKey(request)` validation
 - `isValidApiKey(apiKey)` check
 - `isProviderAllowed(apiKeyInfo, providerAlias)` filter

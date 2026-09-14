@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "project": {
-    "name": "vansrouter-app",
+    "name": "freezeraize-app",
     "languages": [
       "4s",
       "config",
@@ -28,7 +28,7 @@
       "Docker",
       "GitHub Actions"
     ],
-    "description": "VansRouter adalah universal AI router dan token saver berbasis Next.js yang menghubungkan CLI tools ke puluhan provider AI, menerjemahkan format API, mengelola quota, serta menyediakan fallback dan optimasi token.",
+    "description": "Freezeraize adalah universal AI router dan token saver berbasis Next.js yang menghubungkan CLI tools ke puluhan provider AI, menerjemahkan format API, mengelola quota, serta menyediakan fallback dan optimasi token.",
     "analyzedAt": "2026-08-03T07:17:01.474Z",
     "gitCommitHash": "8342d58211ee865842ac29d76260489705c05d92"
   },
@@ -136404,7 +136404,7 @@
     {
       "order": 1,
       "title": "Gambaran Proyek dan Kontrak Utama",
-      "description": "Mulai dari README untuk memahami VansRouter sebagai proxy API universal: satu endpoint OpenAI-compatible yang menghubungkan banyak provider dan menghemat token dengan RTK.",
+      "description": "Mulai dari README untuk memahami Freezeraize sebagai proxy API universal: satu endpoint OpenAI-compatible yang menghubungkan banyak provider dan menghemat token dengan RTK.",
       "nodeIds": [
         "file:README.md",
         "file:package.json"

@@ -1,22 +1,22 @@
-# VansRouter - FREE AI Router & Token Saver
+# Freezeraize - FREE AI Router & Token Saver
 
 **Never stop coding. Save 20-40% tokens with RTK + auto-fallback to FREE & cheap AI models.**
 
 **Connect All AI Code Tools (Claude Code, Cursor, Antigravity, Copilot, Codex, Gemini, OpenCode, Cline, OpenClaw...) to 40+ AI Providers & 100+ Models.**
 
-[![npm](https://img.shields.io/npm/v/vansrouter.svg)](https://www.npmjs.com/package/vansrouter)
-[![Downloads](https://img.shields.io/npm/dm/vansrouter.svg)](https://www.npmjs.com/package/vansrouter)
-[![Docker Pulls](https://img.shields.io/docker/pulls/vanszs/vansrouter.svg?logo=docker&label=Docker%20pulls)](https://hub.docker.com/r/vanszs/vansrouter)
-[![GHCR](https://img.shields.io/badge/GHCR-Vanszs%2FVansRouter-blue?logo=github)](https://github.com/Vanszs/VansRouter/pkgs/container/VansRouter)
-[![License](https://img.shields.io/npm/l/vansrouter.svg)](https://github.com/Vanszs/VansRouter/blob/main/LICENSE)
+[![npm](https://img.shields.io/npm/v/freezeraize.svg)](https://www.npmjs.com/package/freezeraize)
+[![Downloads](https://img.shields.io/npm/dm/freezeraize.svg)](https://www.npmjs.com/package/freezeraize)
+[![Docker Pulls](https://img.shields.io/docker/pulls/freezeraize-star/freezeraize.svg?logo=docker&label=Docker%20pulls)](https://hub.docker.com/r/freezeraize-star/freezeraize)
+[![GHCR](https://img.shields.io/badge/GHCR-freezeraize-star%2FFreezeraize-blue?logo=github)](https://github.com/freezeraize-star/Freezeraize/pkgs/container/Freezeraize)
+[![License](https://img.shields.io/npm/l/freezeraize.svg)](https://github.com/freezeraize-star/Freezeraize/blob/main/LICENSE)
 
-<a href="https://trendshift.io/repositories/22628" target="_blank"><img src="https://trendshift.io/api/badge/repositories/22628" alt="decolua%2F9router | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/22628" target="_blank"><img src="https://trendshift.io/api/badge/repositories/22628" alt="freezeraize-star%2F9router | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
-[🌐 Website](https://vansrouter.com) • [📖 Full Docs](https://github.com/Vanszs/VansRouter)
+[🌐 Website](https://freezeraize.com) • [📖 Full Docs](https://github.com/freezeraize-star/Freezeraize)
 
 ---
 
-## 🤔 Why VansRouter?
+## 🤔 Why Freezeraize?
 
 **Stop wasting money, tokens and hitting limits:**
 
@@ -25,7 +25,7 @@
 - ❌ Tool outputs (git diff, grep, ls...) burn tokens fast
 - ❌ Expensive APIs ($20-50/month per provider)
 
-**VansRouter solves this:**
+**Freezeraize solves this:**
 
 - ✅ **RTK Token Saver** - Auto-compress tool_result, save 20-40% tokens
 - ✅ **Maximize subscriptions** - Track quota, use every bit before reset
@@ -40,22 +40,22 @@
 **Option 1 — npm (recommended for desktop):**
 
 ```bash
-npm install -g vansrouter
-vansrouter
+npm install -g freezeraize
+freezeraize
 
 # Or run directly with npx
-npx vansrouter
+npx freezeraize
 ```
 
 **Option 2 — Docker (server/VPS):**
 
 ```bash
-docker run -d --name vansrouter -p 20128:20128 \
+docker run -d --name freezeraize -p 20128:20128 \
   -v "$HOME/.9router:/app/data" -e DATA_DIR=/app/data \
-  ghcr.io/vanszs/vansrouter:latest
+  ghcr.io/freezeraize-star/freezeraize:latest
 ```
 
-Published images: [Docker Hub](https://hub.docker.com/r/vanszs/vansrouter) • [GHCR](https://github.com/Vanszs/VansRouter/pkgs/container/VansRouter) (multi-platform amd64/arm64).
+Published images: [Docker Hub](https://hub.docker.com/r/freezeraize-star/freezeraize) • [GHCR](https://github.com/freezeraize-star/Freezeraize/pkgs/container/Freezeraize) (multi-platform amd64/arm64).
 
 🎉 Dashboard opens at `http://localhost:20128`
 
@@ -79,11 +79,11 @@ That's it! Start coding with FREE AI models.
 ## 🚀 CLI Options
 
 ```bash
-vansrouter                    # Start with default settings
-vansrouter --port 8080        # Custom port
-vansrouter --no-browser       # Don't open browser
-vansrouter --skip-update      # Skip auto-update check
-vansrouter --help             # Show all options
+freezeraize                    # Start with default settings
+freezeraize --port 8080        # Custom port
+freezeraize --no-browser       # Don't open browser
+freezeraize --skip-update      # Skip auto-update check
+freezeraize --help             # Show all options
 ```
 
 **Dashboard**: `http://localhost:20128/dashboard`
@@ -110,9 +110,9 @@ Any tool supporting OpenAI/Claude-compatible API works.
 
 Full docs, advanced setup, video tutorials & development guide:
 
-- **GitHub**: https://github.com/Vanszs/VansRouter
-- **Full README**: https://github.com/Vanszs/VansRouter/blob/main/README.md
-- **Website**: https://vansrouter.com
+- **GitHub**: https://github.com/freezeraize-star/Freezeraize
+- **Full README**: https://github.com/freezeraize-star/Freezeraize/blob/main/README.md
+- **Website**: https://freezeraize.com
 
 ---
 

@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="../images/9router.png?1" alt="VansRouter Dashboard" width="800"/>
+  <img src="../images/9router.png?1" alt="Freezeraize Dashboard" width="800"/>
 
   # 9Router - 無料 AI ルーター
 
@@ -7,11 +7,11 @@
 
   **すべてのAIコーディングツール（Claude Code、Cursor、Antigravity、Copilot、Codex、Gemini、OpenCode、Cline、OpenClaw...）を40以上のAIプロバイダーと100以上のモデルに接続。**
 
-  [![npm](https://img.shields.io/npm/v/vansrouter.svg)](https://www.npmjs.com/package/vansrouter)
-  [![Downloads](https://img.shields.io/npm/dm/vansrouter.svg)](https://www.npmjs.com/package/vansrouter)
-  [![License](https://img.shields.io/npm/l/vansrouter.svg)](https://github.com/Vanszs/VansRouter/blob/main/LICENSE)
+  [![npm](https://img.shields.io/npm/v/freezeraize.svg)](https://www.npmjs.com/package/freezeraize)
+  [![Downloads](https://img.shields.io/npm/dm/freezeraize.svg)](https://www.npmjs.com/package/freezeraize)
+  [![License](https://img.shields.io/npm/l/freezeraize.svg)](https://github.com/freezeraize-star/Freezeraize/blob/main/LICENSE)
 
-  [🚀 クイックスタート](#-クイックスタート) • [💡 機能](#-主な機能) • [📖 セットアップ](#-セットアップガイド) • [🌐 ウェブサイト](https://vansrouter.com)
+  [🚀 クイックスタート](#-クイックスタート) • [💡 機能](#-主な機能) • [📖 セットアップ](#-セットアップガイド) • [🌐 ウェブサイト](https://freezeraize.com)
 
   [🇻🇳 Tiếng Việt](./README.vi.md) • [🇨🇳 中文](./README.zh-CN.md) • [🇯🇵 日本語](./README.ja-JP.md)
 </div>
@@ -91,7 +91,7 @@ Claude Code/Codex/Gemini CLI/OpenClaw/Cursor/Clineの設定:
 
 **代替方法: ソースから実行（このリポジトリ）：**
 
-このリポジトリパッケージはプライベート（`vansrouter-app`）のため、ソース/Docker実行がローカル開発の想定パスです。
+このリポジトリパッケージはプライベート（`freezeraize-app`）のため、ソース/Docker実行がローカル開発の想定パスです。
 
 ```bash
 cp .env.example .env
@@ -945,7 +945,7 @@ Model: cc/claude-opus-4-6
 
 ```bash
 # クローンとインストール
-git clone https://github.com/Vanszs/VansRouter.git
+git clone https://github.com/freezeraize-star/Freezeraize.git
 cd 9router
 npm install
 npm run build
@@ -958,7 +958,7 @@ export PORT="20128"
 export HOSTNAME="0.0.0.0"
 export NODE_ENV="production"
 export NEXT_PUBLIC_BASE_URL="http://localhost:20128"
-export NEXT_PUBLIC_CLOUD_URL="https://vansrouter.com"
+export NEXT_PUBLIC_CLOUD_URL="https://freezeraize.com"
 export API_KEY_SECRET="endpoint-proxy-api-key-secret"
 export MACHINE_ID_SALT="endpoint-proxy-salt"
 
@@ -1023,9 +1023,9 @@ docker stop 9router && docker rm 9router
 | `HOSTNAME` | フレームワークデフォルト | バインドホスト（Dockerデフォルトは`0.0.0.0`） |
 | `NODE_ENV` | ランタイムデフォルト | デプロイ時は`production`に設定 |
 | `BASE_URL` | `http://localhost:20128` | クラウド同期ジョブで使用されるサーバーサイド内部ベースURL |
-| `CLOUD_URL` | `https://vansrouter.com` | サーバーサイドのクラウド同期エンドポイントベースURL |
+| `CLOUD_URL` | `https://freezeraize.com` | サーバーサイドのクラウド同期エンドポイントベースURL |
 | `NEXT_PUBLIC_BASE_URL` | `http://localhost:3000` | 後方互換/公開ベースURL（サーバーランタイムには`BASE_URL`を推奨） |
-| `NEXT_PUBLIC_CLOUD_URL` | `https://vansrouter.com` | 後方互換/公開クラウドURL（サーバーランタイムには`CLOUD_URL`を推奨） |
+| `NEXT_PUBLIC_CLOUD_URL` | `https://freezeraize.com` | 後方互換/公開クラウドURL（サーバーランタイムには`CLOUD_URL`を推奨） |
 | `API_KEY_SECRET` | `endpoint-proxy-api-key-secret` | 生成されたAPIキーのHMACシークレット |
 | `MACHINE_ID_SALT` | `endpoint-proxy-salt` | 安定したマシンIDハッシュのソルト |
 | `ENABLE_REQUEST_LOGS` | `false` | `logs/` 配下のリクエスト/レスポンスログを有効化 |
@@ -1166,9 +1166,9 @@ Authorization: Bearer your-api-key
 
 ## 📧 サポート
 
-- **ウェブサイト**: [9router.com](https://vansrouter.com)
-- **GitHub**: [github.com/decolua/9router](https://github.com/Vanszs/VansRouter)
-- **Issues**: [github.com/decolua/9router/issues](https://github.com/Vanszs/VansRouter/issues)
+- **ウェブサイト**: [9router.com](https://freezeraize.com)
+- **GitHub**: [github.com/freezeraize-star/9router](https://github.com/freezeraize-star/Freezeraize)
+- **Issues**: [github.com/freezeraize-star/9router/issues](https://github.com/freezeraize-star/Freezeraize/issues)
 
 ---
 
@@ -1176,13 +1176,13 @@ Authorization: Bearer your-api-key
 
 9Routerの改善に貢献してくださったすべてのコントリビューターに感謝します！
 
-[![Contributors](https://contrib.rocks/image?repo=decolua/9router&max=150&columns=15&anon=1&v=20260309)](https://github.com/Vanszs/VansRouter/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=freezeraize-star/9router&max=150&columns=15&anon=1&v=20260309)](https://github.com/freezeraize-star/Freezeraize/graphs/contributors)
 
 ---
 
 ## 📊 スターチャート
 
-[![Star Chart](https://starchart.cc/decolua/9router.svg?variant=adaptive)](https://starchart.cc/decolua/9router)
+[![Star Chart](https://starchart.cc/freezeraize-star/9router.svg?variant=adaptive)](https://starchart.cc/freezeraize-star/9router)
 
 
 

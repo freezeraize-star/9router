@@ -6,8 +6,8 @@ import { createPortal } from "react-dom";
 import { GITHUB_CONFIG } from "@/shared/constants/config";
 
 const DEFAULT_DONATE_DATA = {
-  title: "Support VansRouter",
-  message: "Terima kasih telah mendukung pengembangan VansRouter agar infrastruktur dan fitur baru terus aktif!",
+  title: "Support Freezeraize",
+  message: "Terima kasih telah mendukung pengembangan Freezeraize agar infrastruktur dan fitur baru terus aktif!",
   channels: [
     {
       id: "saweria",
@@ -15,7 +15,7 @@ const DEFAULT_DONATE_DATA = {
       description: "Dukung via QRIS, GoPay, OVO, DANA, LinkAja, ShopeePay",
       icon: "volunteer_activism",
       color: "#FAAE2B",
-      url: "https://saweria.co/vanszs"
+      url: "https://saweria.co/freezeraize-star"
     },
     {
       id: "trakteer",

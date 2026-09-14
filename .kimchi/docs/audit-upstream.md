@@ -1,7 +1,7 @@
 # Upstream Cherry-Pick Safety Audit
 
-**Repo:** `/media/DiskE/Code/9router-new` (`Vanszs/VansRouter`)  
-**Upstream:** `decolua/9router` (remote `upstream`)  
+**Repo:** `/media/DiskE/Code/9router-new` (`freezeraize-star/Freezeraize`)  
+**Upstream:** `freezeraize-star/9router` (remote `upstream`)  
 **Audited range:** `origin/main..HEAD` (commits not yet pushed to our `main`)  
 **Date:** 2026-06-28
 
@@ -83,7 +83,7 @@ I looked for upstream-derived commits already present in our tree using:
 
 ## Non-Upstream Commit in the Same Range
 
-- **`f9752e92`** — `fix(build): Windows EPERM, webpack bun:sqlite/node:sqlite, missing deps, profile use-client` is **VansRoute-only** (authored by Vanszs). It restores the 5 missing resilience test files and fixes the Windows build. Decision: **KEEP CUSTOM** — required for our fork and must not be reverted.
+- **`f9752e92`** — `fix(build): Windows EPERM, webpack bun:sqlite/node:sqlite, missing deps, profile use-client` is **VansRoute-only** (authored by freezeraize-star). It restores the 5 missing resilience test files and fixes the Windows build. Decision: **KEEP CUSTOM** — required for our fork and must not be reverted.
 
 ## Older Upstream Commits Already in `origin/main`
 

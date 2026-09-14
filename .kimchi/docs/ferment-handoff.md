@@ -10,7 +10,7 @@
 ## 1. Konteks Lengkap: Apa Itu VansRoute dan OmniRoute
 
 ### VansRoute (9router)
-VansRoute adalah **universal API proxy**: satu endpoint OpenAI-compatible → 100+ AI provider (LLM, image, TTS, STT, embedding, search). Dibangun dengan Next.js 16 + standalone output + PM2. Repository: `https://github.com/Vanszs/VansRouter.git`
+VansRoute adalah **universal API proxy**: satu endpoint OpenAI-compatible → 100+ AI provider (LLM, image, TTS, STT, embedding, search). Dibangun dengan Next.js 16 + standalone output + PM2. Repository: `https://github.com/freezeraize-star/Freezeraize.git`
 
 ### OmniRoute (referensi)
 OmniRoute adalah codebase lain (TypeScript) yang memiliki pola resilience yang sudah teruji. Kita menganalisis file-file berikut dari OmniRoute dan memporting polanya ke VansRoute:
@@ -132,7 +132,7 @@ Repair git object store corruption, rebuild node_modules, fix build errors, veri
 | 5 | `git log origin/main..HEAD` = 0 | ❌ | User said NO PUSH |
 
 ### Phase 1 — Git Repair + Build Fix: ✅ COMPLETE
-- Git corruption fixed via fresh clone dari `https://github.com/Vanszs/VansRouter`
+- Git corruption fixed via fresh clone dari `https://github.com/freezeraize-star/Freezeraize`
 - Build fixed dengan beberapa perbaikan (lihat Section 6)
 
 ### Phase 2 — Test Verification + Commit Push: ❌ NOT STARTED

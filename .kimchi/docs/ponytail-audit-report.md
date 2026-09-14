@@ -1,6 +1,6 @@
 # Ponytail Audit Report
 
-Scope: unpushed changes (`origin/main..HEAD` + working tree) of the VansRouter
+Scope: unpushed changes (`origin/main..HEAD` + working tree) of the Freezeraize
 fresh clone at `/media/DiskE/Code/9router-new`. 67 files changed, +7906/-3676
 (vs origin/main). Audit dimensions: over-engineering, dead code, YAGNI,
 hand-rolled stdlib/native, speculative config. Correctness/security/perf are

@@ -1,5 +1,5 @@
 // Unit tests to ensure database pathing and Docker configurations
-// remain bound to "9router" to prevent data loss on VansRouter upgrades.
+// remain bound to "9router" to prevent data loss on Freezeraize upgrades.
 import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";

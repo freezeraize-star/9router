@@ -1,8 +1,8 @@
 # Docker
 
-Run VansRouter in a container. Published images:
-- GHCR: [`ghcr.io/vanszs/vansrouter`](https://github.com/Vanszs/VansRouter/pkgs/container/VansRouter)
-- Docker Hub: [`vanszs/vansrouter`](https://hub.docker.com/r/vanszs/vansrouter)
+Run Freezeraize in a container. Published images:
+- GHCR: [`ghcr.io/freezeraize-star/freezeraize`](https://github.com/freezeraize-star/Freezeraize/pkgs/container/Freezeraize)
+- Docker Hub: [`freezeraize-star/freezeraize`](https://hub.docker.com/r/freezeraize-star/freezeraize)
 
 Multi-platform `linux/amd64` + `linux/arm64`.
 
@@ -17,8 +17,8 @@ docker run -d \
   -p 20128:20128 \
   -v "$HOME/.9router:/app/data" \
   -e DATA_DIR=/app/data \
-  --name vansrouter \
-  ghcr.io/vanszs/vansrouter:latest
+  --name freezeraize \
+  ghcr.io/freezeraize-star/freezeraize:latest
 ```
 
 App listens on port `20128`. Open: http://localhost:20128
@@ -26,10 +26,10 @@ App listens on port `20128`. Open: http://localhost:20128
 ## Manage container
 
 ```bash
-docker logs -f vansrouter        # view logs
-docker stop vansrouter           # stop
-docker start vansrouter          # start again
-docker rm -f vansrouter          # remove
+docker logs -f freezeraize        # view logs
+docker stop freezeraize           # stop
+docker start freezeraize          # start again
+docker rm -f freezeraize          # remove
 ```
 
 ## Data persistence
@@ -55,9 +55,9 @@ Host path: `$HOME/.9router/db/data.sqlite`
 Container path: `/app/data/db/data.sqlite`
 
 Production requirements:
-- Run one VansRouter process per SQLite file. Multiple containers/processes with separate local volumes do not share proxy-pool fitness state.
+- Run one Freezeraize process per SQLite file. Multiple containers/processes with separate local volumes do not share proxy-pool fitness state.
 - If scaling horizontally, provide a shared database/backend for routing state before enabling multiple app instances.
-- Keep the persistent volume name `vansrouter-data`; renaming it creates a new empty database volume.
+- Keep the persistent volume name `freezeraize-data`; renaming it creates a new empty database volume.
 - Production requires a native SQLite driver. The `sql.js` fallback is single-process development fallback only.
 
 ## Optional env vars
@@ -70,8 +70,8 @@ docker run -d \
   -e PORT=20128 \
   -e HOSTNAME=0.0.0.0 \
   -e DEBUG=true \
-  --name vansrouter \
-  ghcr.io/vanszs/vansrouter:latest
+  --name freezeraize \
+  ghcr.io/freezeraize-star/freezeraize:latest
 ```
 
 ## Optional Headroom sidecar
@@ -97,14 +97,14 @@ Create your own `docker-compose.yml`:
 
 ```yaml
 services:
-  vansrouter:
-    image: ghcr.io/vanszs/vansrouter:latest
-    container_name: vansrouter
+  freezeraize:
+    image: ghcr.io/freezeraize-star/freezeraize:latest
+    container_name: freezeraize
     restart: always
     ports:
       - "20128:20128"
     volumes:
-      - vansrouter-data:/app/data
+      - freezeraize-data:/app/data
     env_file:
       - .env
     environment:
@@ -124,8 +124,8 @@ services:
       - "8787:8787"
 
 volumes:
-  vansrouter-data:
-    name: vansrouter-data
+  freezeraize-data:
+    name: freezeraize-data
 ```
 
 ### Option C: Separate Containers
@@ -139,8 +139,8 @@ If Headroom runs on the Docker host instead of as a sidecar, use `http://host.do
 ## Update to latest
 
 ```bash
-docker pull ghcr.io/vanszs/vansrouter:latest
-docker rm -f vansrouter
+docker pull ghcr.io/freezeraize-star/freezeraize:latest
+docker rm -f freezeraize
 # re-run the quick start command
 ```
 
@@ -151,19 +151,19 @@ docker rm -f vansrouter
 ## Build image locally (test)
 
 ```bash
-docker build -t vansrouter .
+docker build -t freezeraize .
 
 docker run --rm -p 20128:20128 \
   -v "$HOME/.9router:/app/data" \
   -e DATA_DIR=/app/data \
-  vansrouter
+  freezeraize
 ```
 
 ## Publish (automatic via CI)
 
 Push a git tag `v*` → GitHub Actions builds multi-platform (amd64+arm64) and pushes to:
-- `ghcr.io/vanszs/vansrouter:v{version}` + `:latest`
-- `vanszs/vansrouter:v{version}` + `:latest`
+- `ghcr.io/freezeraize-star/freezeraize:v{version}` + `:latest`
+- `freezeraize-star/freezeraize:v{version}` + `:latest`
 
 ```bash
 # Use scripts/release.js (recommended)
