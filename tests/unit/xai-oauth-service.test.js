@@ -1,10 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// Prevent proxyFetch.js from patching global.fetch; otherwise an earlier test
+// that loaded it would cause this test to use a captured originalFetch and
+// either hang on real network calls or return undefined responses.
+vi.mock("open-sse/utils/proxyFetch.js", () => ({
+  default: (url, options) => globalThis.fetch(url, options),
+  proxyAwareFetch: (url, options) => globalThis.fetch(url, options),
+  resolveAntigravityProxyConfig: vi.fn(),
+}));
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
+  default: (url, options) => globalThis.fetch(url, options),
+  proxyAwareFetch: (url, options) => globalThis.fetch(url, options),
+  resolveAntigravityProxyConfig: vi.fn(),
+}));
+
 describe("xai/oauth service", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
     vi.restoreAllMocks();
     vi.stubGlobal("fetch", vi.fn());
+    const xaiService = await import("../../src/lib/oauth/services/xai.js");
+    xaiService._resetXaiDiscoveryCache?.();
+    const providers = await import("../../src/lib/oauth/providers.js");
+    providers._resetXaiDiscoveryCache?.();
   });
 
   it("validates discovered endpoints are https x.ai URLs", async () => {

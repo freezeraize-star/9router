@@ -62,8 +62,8 @@ describe("Xquik search provider", () => {
     expect(getProvidersByKind("webSearch").map((provider) => provider.id)).toContain("xquik");
   });
 
-  it("builds the documented GET request without putting the key in the URL", () => {
-    const request = buildSearchRequest(CONFIG, PARAMS);
+  it("builds the documented GET request without putting the key in the URL", async () => {
+    const request = await buildSearchRequest(CONFIG, PARAMS);
     const url = new URL(request.url);
 
     expect(url.origin + url.pathname).toBe("https://xquik.com/api/v1/x/tweets/search");
@@ -81,11 +81,11 @@ describe("Xquik search provider", () => {
     });
   });
 
-  it("rejects unsupported query types before contacting Xquik", () => {
-    expect(() => buildSearchRequest(CONFIG, {
+  it("rejects unsupported query types before contacting Xquik", async () => {
+    await expect(buildSearchRequest(CONFIG, {
       ...PARAMS,
       providerOptions: { queryType: "Popular" },
-    })).toThrow("Xquik queryType must be Latest or Top");
+    })).rejects.toThrow("Xquik queryType must be Latest or Top");
   });
 
   it("normalizes posts and preserves cursor pagination", () => {

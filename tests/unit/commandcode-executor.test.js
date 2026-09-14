@@ -4,20 +4,6 @@ import {
   inspectAndWrapCommandCodeResponse,
   CommandCodeExecutor,
 } from "../../open-sse/executors/commandcode.js";
-
-// `handleComboChat` reaches `saveErrorLog` on a fallback, and that writes to the real
-// SQLite database under `~/.9router` — so running this file left a bogus failure in the
-// operator's dashboard, naming a combo ("test-combo") and account that do not exist.
-// Mocking the persistence boundary keeps the test on its actual subject: the fallback
-// decision. `vi.mock` is hoisted above the imports, so it applies before `combo.js`
-// captures the binding. The mock is deliberately partial — only the writer is replaced,
-// so a future export consumed by the combo path still resolves normally instead of
-// crashing the suite with an undefined import.
-vi.mock("@/lib/usageDb.js", async (importOriginal) => {
-  const actual = await importOriginal();
-  return { ...actual, saveErrorLog: vi.fn(async () => "test-error-log-id") };
-});
-
 import { handleComboChat } from "../../open-sse/services/combo.js";
 
 function createNdjsonStream(lines) {
@@ -200,7 +186,7 @@ describe("CommandCode in Combo Fallback", () => {
     const data = await comboResponse.json();
     expect(data.choices[0].message.content).toBe("Fallback success!");
     expect(handleSingleModel).toHaveBeenCalledTimes(2);
-    expect(handleSingleModel).toHaveBeenNthCalledWith(1, expect.anything(), "commandcode/poolside/laguna-s-2.1-free");
-    expect(handleSingleModel).toHaveBeenNthCalledWith(2, expect.anything(), "openai/gpt-4o-mini");
+    expect(handleSingleModel).toHaveBeenNthCalledWith(1, expect.anything(), "commandcode/poolside/laguna-s-2.1-free", expect.anything());
+    expect(handleSingleModel).toHaveBeenNthCalledWith(2, expect.anything(), "openai/gpt-4o-mini", expect.anything());
   });
 });

@@ -1,9 +1,7 @@
 import { PROVIDER_MODELS } from "open-sse/config/providerModels.js";
 import { AI_PROVIDERS, ALIAS_TO_ID } from "@/shared/constants/providers";
 import { getModelKind } from "@/shared/constants/models";
-import { getCustomModels, getProviderConnections } from "@/lib/localDb";
-import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
-import { applyModelLimitsToCaps, modelLimitsForOpenAI, withoutModelLimits } from "@/shared/utils/modelTokenLimits";
+import { EXA_SEARCH_PARAMETER_SCHEMA } from "open-sse/handlers/search/exa.js";
 
 const KIND_ENDPOINT = {
   llm: "/v1/chat/completions",
@@ -18,7 +16,7 @@ const KIND_ENDPOINT = {
 
 const TTS_VOICES_API = new Set(["elevenlabs", "edge-tts", "deepgram", "inworld", "local-device"]);
 
-function buildInfo({ alias, providerId, model, kind, providerInfo, caps }) {
+function buildInfo({ alias, providerId, model, kind, providerInfo }) {
   const out = {
     id: `${alias}/${model.id}`,
     name: model.name || model.id,
@@ -27,42 +25,31 @@ function buildInfo({ alias, providerId, model, kind, providerInfo, caps }) {
     endpoint: KIND_ENDPOINT[kind] || null,
   };
   if (model.params) out.params = model.params;
-  if (caps || model.capabilities) out.capabilities = caps || model.capabilities;
+  if (model.capabilities) out.capabilities = model.capabilities;
   if (model.options) out.options = model.options;
   if (model.dimensions) out.dimensions = model.dimensions;
-  if (caps?.contextWindow || model.contextWindow) out.contextWindow = caps?.contextWindow || model.contextWindow;
+  if (model.contextWindow) out.contextWindow = model.contextWindow;
   if (kind === "tts" && TTS_VOICES_API.has(providerId)) {
     out.voicesUrl = `/v1/audio/voices?provider=${providerId}`;
   }
   if (kind === "webSearch" && providerInfo?.searchConfig) {
     const cfg = providerInfo.searchConfig;
-    if (cfg.searchTypes) out.searchTypes = cfg.searchTypes;
+     if (cfg.searchTypes) out.searchTypes = cfg.searchTypes;
+     if (cfg.exaSearchTypes) out.exaSearchTypes = cfg.exaSearchTypes;
     if (cfg.maxMaxResults) out.maxResults = cfg.maxMaxResults;
     if (cfg.requiredOptions) out.required = cfg.requiredOptions;
   }
-  return kind === "llm" ? { ...out, ...modelLimitsForOpenAI({ caps: caps || model }) } : out;
+  return out;
 }
 
 // id format: "{alias}/{modelId}" - alias may also be providerId
 // requestedKind: optional, disambiguates duplicate ids across kinds (e.g. gemini-2.5-pro llm vs stt)
-async function lookup(fullId, requestedKind) {
+function lookup(fullId, requestedKind) {
   if (!fullId || !fullId.includes("/")) return null;
   const slash = fullId.indexOf("/");
   const alias = fullId.slice(0, slash);
   const modelId = fullId.slice(slash + 1);
-  let providerId = ALIAS_TO_ID[alias] || alias;
-  let storageAliases = new Set([alias, providerId]);
-  try {
-    const matchingConnection = (await getProviderConnections()).find((connection) =>
-      connection?.providerSpecificData?.prefix === alias || connection?.provider === alias
-    );
-    if (matchingConnection?.provider) {
-      providerId = matchingConnection.provider;
-      storageAliases = new Set([alias, providerId]);
-    }
-  } catch {
-    // Static model info remains available when connections cannot be read.
-  }
+  const providerId = ALIAS_TO_ID[alias] || alias;
   const providerInfo = AI_PROVIDERS[providerId];
 
   // PROVIDER_MODELS lookup (by alias key, fallback to providerId)
@@ -70,45 +57,23 @@ async function lookup(fullId, requestedKind) {
   const m = requestedKind
     ? list.find((x) => x.id === modelId && getModelKind(x, "llm") === requestedKind)
     : list.find((x) => x.id === modelId);
-
-  let customModel = null;
-  try {
-    const customModels = await getCustomModels();
-    customModel = customModels.find((item) =>
-      item?.id === modelId
-      && storageAliases.has(item.providerAlias)
-      && (!requestedKind || getModelKind(item, "llm") === requestedKind)
-    ) || null;
-  } catch {
-    // Keep static lookup available when persistence is temporarily unavailable.
-  }
-
-  if (customModel) {
-    const kind = getModelKind(customModel, "llm");
-    const fallback = getCapabilitiesForModel(providerId, modelId);
-    const caps = applyModelLimitsToCaps({
-      ...(m ? fallback : withoutModelLimits(fallback)),
-      ...(customModel.caps || {}),
-    }, customModel);
-    return buildInfo({ alias, providerId, model: customModel, kind, providerInfo, caps });
-  }
   if (m) {
     const kind = getModelKind(m, "llm");
-    return buildInfo({
-      alias,
-      providerId,
-      model: m,
-      kind,
-      providerInfo,
-      caps: kind === "llm" ? getCapabilitiesForModel(providerId, modelId) : null,
-    });
+    return buildInfo({ alias, providerId, model: m, kind, providerInfo });
   }
 
   // Web search/fetch — virtual model id "search" / "fetch"
-  if (modelId === "search" && providerInfo?.searchConfig) {
+  if (modelId === "search" && (providerInfo?.searchConfig || providerInfo?.searchViaChat)) {
     return buildInfo({
       alias, providerId, kind: "webSearch", providerInfo,
-      model: { id: "search", name: `${providerInfo.name} Search`, params: ["query", "max_results", "country", "language", "time_range", "domain_filter", "search_type"] },
+       model: {
+         id: "search",
+         name: `${providerInfo.name || providerId} Search`,
+         params: providerId === "exa"
+           ? ["query", "max_results", "search_type", "exa_options", "exa_options.contents"]
+           : ["query", "max_results", "country", "language", "time_range", "domain_filter", "search_type"],
+         ...(providerId === "exa" ? { parameterSchema: EXA_SEARCH_PARAMETER_SCHEMA } : {}),
+       },
     });
   }
   if (modelId === "fetch" && providerInfo?.fetchConfig) {
@@ -137,7 +102,7 @@ export async function GET(request) {
       { status: 400, headers: { "Access-Control-Allow-Origin": "*" } },
     );
   }
-  const info = await lookup(id, kind);
+  const info = lookup(id, kind);
   if (!info) {
     return Response.json(
       { error: { message: `Model not found: ${id}`, type: "not_found" } },

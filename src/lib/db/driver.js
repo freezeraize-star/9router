@@ -1,3 +1,5 @@
+// NOTE: driver.js → migrate.js → metaStore.js → driver.js forms a static import cycle,
+// but all cross-module references use dynamic `await import()` which breaks the cycle at runtime.
 import { ensureDirs, DATA_FILE } from "./paths.js";
 
 // Use global to survive Next.js dev hot-reload (module state resets on reload)
@@ -79,10 +81,7 @@ export async function getAdapter() {
   return state.initPromise;
 }
 
-export async function closeDb() {
-  if (state.instance) {
-    if (state.instance.close) state.instance.close();
-    state.instance = null;
-    state.initPromise = null;
-  }
+export function getAdapterSync() {
+  if (!state.instance) throw new Error("[DB] adapter not initialized — await getAdapter() first");
+  return state.instance;
 }

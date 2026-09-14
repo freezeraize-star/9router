@@ -13,12 +13,10 @@ const {
   ensureSession,
   requestSession,
   startRun,
-  endSession,
   resetSessionCache,
   rootAgentIdForModel,
   injectFreebuffMarker,
-  fetchSessionOffers,
-  guardOfferClaim,
+  injectEndTurnTool,
   FREEBUFF_SYSTEM_MARKER,
 } = __test__;
 
@@ -44,9 +42,6 @@ afterEach(() => {
 beforeEach(() => {
   fetchMock.mockReset();
   resetSessionCache();
-  // Fork-specific: pacing slot registry lives on globalThis — reset so
-  // execute() tests can run back-to-back without tripping the 20s gap.
-  delete globalThis.__9routerFreebuffPacing__;
 });
 
 describe("freebuff oauth flow", () => {
@@ -195,12 +190,12 @@ describe("freebuff executor wire shape", () => {
     const ex = new FreebuffExecutor();
     const body = { model: "deepseek/deepseek-v4-flash", messages: [{ role: "user", content: "hi" }] };
     const out = ex.transformRequest(body.model, body, true, {
-      providerSpecificData: { fingerprintId: "enhanced-fp-1" },
+      providerSpecificData: { fingerprintId: "fp-1" },
     });
     // Top-level keys — the backend rejects the nested shape with
     // "No runId found in request body".
     expect(out.codebuff_metadata.cost_mode).toBe("free");
-    expect(out.codebuff_metadata.client_id).toBe("enhanced-fp-1");
+    expect(out.codebuff_metadata.client_id).toBe("fp-1");
     // run_id is the registered runId and is attached by execute(), not here.
     expect(out.codebuff_metadata.run_id).toBeUndefined();
     expect(out.codebuff).toBeUndefined();
@@ -214,46 +209,26 @@ describe("freebuff executor wire shape", () => {
     expect(ex.buildUrl()).toBe("https://www.codebuff.com/api/v1/chat/completions");
   });
 
-  it("injects the end_turn tool into any tool-calling request (backend foreign_toolset gate)", () => {
-    const ex = new FreebuffExecutor();
-    const body = {
-      model: "deepseek/deepseek-v4-flash",
-      messages: [{ role: "user", content: "hi" }],
-      tools: [{ type: "function", function: { name: "read_file", description: "read" } }],
-    };
-    const out = ex.transformRequest(body.model, body, true, { providerSpecificData: { fingerprintId: "fp-1" } });
-    const names = out.tools.map((t) => t.function.name);
-    expect(names).toContain("read_file");
-    expect(names).toContain("end_turn");
-    expect(out.tools[out.tools.length - 1].function).toMatchObject({
-      name: "end_turn",
-      description: "Signal the end of the current task.",
-    });
+  it("injects end_turn into tool calls without duplicating existing end_turn", () => {
+    const body = { tools: [{ type: "function", function: { name: "read_file" } }] };
+    const injected = injectEndTurnTool(body);
+    expect(injected.tools.map((tool) => tool.function.name)).toEqual(["read_file", "end_turn"]);
+    expect(injectEndTurnTool(injected)).toBe(injected);
   });
 
-  it("does not inject end_turn when the request has no tools", () => {
+  it("explains the Freebuff tool gate on endpoint lookup errors", async () => {
     const ex = new FreebuffExecutor();
-    const body = { model: "deepseek/deepseek-v4-flash", messages: [{ role: "user", content: "hi" }] };
-    const out = ex.transformRequest(body.model, body, true, { providerSpecificData: { fingerprintId: "fp-1" } });
-    expect(out.tools).toBeUndefined();
-  });
-
-  it("does not duplicate end_turn when the caller already declared it", () => {
-    const ex = new FreebuffExecutor();
-    const endTurn = { type: "function", function: { name: "end_turn", description: "Signal the end of the current task.", parameters: { type: "object", properties: {} } } };
-    const body = {
-      model: "deepseek/deepseek-v4-flash",
-      messages: [{ role: "user", content: "hi" }],
-      tools: [endTurn],
-    };
-    const out = ex.transformRequest(body.model, body, true, { providerSpecificData: { fingerprintId: "fp-1" } });
-    expect(out.tools).toHaveLength(1);
-    expect(out.tools[0].function.name).toBe("end_turn");
+    const parsed = await ex.parseError(
+      { status: 404 },
+      JSON.stringify({ error: { message: "No endpoints found for deepseek/deepseek-v4-flash" } }),
+    );
+    expect(parsed.message).toMatch(/end_turn/i);
+    expect(parsed.resetsAtMs).toBeGreaterThan(Date.now());
   });
 });
 
 describe("freebuff session pre-flight", () => {
-  it("claims a session via POST /session/admission with the model + wallet ceiling, and caches it per token+model", async () => {
+  it("claims a session via POST /session with x-freebuff-model and caches it per token+model", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({
         status: "active",
@@ -266,12 +241,9 @@ describe("freebuff session pre-flight", () => {
     expect(first).toEqual({ instanceId: "inst-1", status: "active" });
 
     const [url, opts] = fetchMock.mock.calls[0];
-    expect(url).toBe("https://www.codebuff.com/api/v1/freebuff/session/admission");
+    expect(url).toBe("https://www.codebuff.com/api/v1/freebuff/session");
     expect(opts.method).toBe("POST");
     expect(opts.headers["x-freebuff-model"]).toBe("deepseek/deepseek-v4-flash");
-    // The CLI declares its wallet ceiling on every claim; 0 means "never spend
-    // the wallet", so a claim can't silently bill.
-    expect(opts.headers["x-freebuff-wallet-spend-limit"]).toBe("0");
     expect(opts.headers.Authorization).toBe("Bearer tok-1");
 
     // Second call for the same token+model hits the cache — no new claim.
@@ -282,68 +254,8 @@ describe("freebuff session pre-flight", () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() }),
     );
-    await ensureSession("tok-1", "z-ai/glm-5.3-flash", null);
+    await ensureSession("tok-1", "minimax/minimax-m3", null);
     expect(fetchMock.mock.calls.length).toBe(2);
-  });
-
-  it("falls back to the legacy /session path when admission is missing, caching only a 405", async () => {
-    fetchMock.mockImplementation(async (url) => {
-      if (url.endsWith("/session/admission")) return jsonResponse({ error: "not_found" }, { status: 405, ok: false });
-      return jsonResponse({ status: "active", instanceId: "inst-legacy", expiresAt: new Date(Date.now() + 3600000).toISOString() });
-    });
-
-    const first = await ensureSession("tok-legacy", "deepseek/deepseek-v4-flash", null);
-    expect(first).toEqual({ instanceId: "inst-legacy", status: "active" });
-    expect(fetchMock.mock.calls.map(([u]) => u)).toEqual([
-      "https://www.codebuff.com/api/v1/freebuff/session/admission",
-      "https://www.codebuff.com/api/v1/freebuff/session",
-    ]);
-
-    // The unsupported answer is remembered — the next claim skips the probe.
-    await ensureSession("tok-legacy", "z-ai/glm-5.3-flash", null);
-    const after = fetchMock.mock.calls.map(([u]) => u);
-    expect(after[2]).toBe("https://www.codebuff.com/api/v1/freebuff/session");
-    expect(after.filter((u) => u.endsWith("/admission")).length).toBe(1);
-  });
-
-  it("retries a 404 from admission on the legacy path without caching the verdict", async () => {
-    // 404 is ambiguous: it is also how the legacy route reports "no row yet", so
-    // a later claim must still probe admission instead of pinning the fallback.
-    fetchMock.mockImplementation(async (url) => {
-      if (url.endsWith("/session/admission")) return jsonResponse({}, { status: 404, ok: false });
-      return jsonResponse({ status: "active", instanceId: "inst-404", expiresAt: new Date(Date.now() + 3600000).toISOString() });
-    });
-
-    await ensureSession("tok-404", "deepseek/deepseek-v4-flash", null);
-    await ensureSession("tok-404", "z-ai/glm-5.3-flash", null);
-    expect(fetchMock.mock.calls.filter(([u]) => u.endsWith("/admission")).length).toBe(2);
-  });
-
-  it("starts a heartbeat for a claimed session and stops it on reset", async () => {
-    vi.useFakeTimers();
-    try {
-      fetchMock.mockResolvedValue(
-        jsonResponse({ status: "active", instanceId: "inst-hb", expiresAt: new Date(Date.now() + 3600000).toISOString() }),
-      );
-      await ensureSession("tok-hb", "deepseek/deepseek-v4-flash", null);
-      expect(fetchMock.mock.calls.length).toBe(1);
-
-      // One beat after the 45s interval: GET with the instance + heartbeat
-      // headers, so the server keeps the concurrency slot instead of sweeping it.
-      await vi.advanceTimersByTimeAsync(45_000);
-      const beat = fetchMock.mock.calls.find(([, o]) => o.method === "GET");
-      expect(beat).toBeTruthy();
-      expect(beat[0]).toBe("https://www.codebuff.com/api/v1/freebuff/session");
-      expect(beat[1].headers["x-freebuff-instance-id"]).toBe("inst-hb");
-      expect(beat[1].headers["x-freebuff-heartbeat"]).toBe("1");
-
-      resetSessionCache();
-      const beatsBefore = fetchMock.mock.calls.filter(([, o]) => o.method === "GET").length;
-      await vi.advanceTimersByTimeAsync(45_000 * 3);
-      expect(fetchMock.mock.calls.filter(([, o]) => o.method === "GET").length).toBe(beatsBefore);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it("treats status none as no-session-needed (instanceId null)", async () => {
@@ -361,50 +273,6 @@ describe("freebuff session pre-flight", () => {
     );
   });
 
-  it("rate_limited with a resetAt locks the account until the daily Pacific reset (skip the day, not retry loops)", async () => {
-    const resetAt = "2099-01-01T00:00:00.000Z";
-    fetchMock.mockResolvedValue(
-      jsonResponse({
-        status: "rate_limited",
-        resetAt,
-        retryAfterMs: 1234,
-        freebucksShortfall: { price: 15, balance: 0 },
-        message: "Freebucks exhausted",
-      }),
-    );
-    await expect(requestSession("tok-1", "deepseek/deepseek-v4-flash", null)).rejects.toMatchObject({
-      status: 429,
-      resetsAtMs: Date.parse(resetAt),
-    });
-  });
-
-  it("spend_limited falls back to retryAfterMs when resetAt is absent", async () => {
-    const retryAfterMs = 90 * 60 * 1000;
-    fetchMock.mockResolvedValue(
-      jsonResponse({ status: "spend_limited", retryAfterMs, message: "daily spend cap" }),
-    );
-    const before = Date.now();
-    try {
-      await requestSession("tok-1", "deepseek/deepseek-v4-flash", null);
-      throw new Error("should have rejected");
-    } catch (error) {
-      expect(error.status).toBe(429);
-      expect(error.resetsAtMs).toBeGreaterThanOrEqual(before + retryAfterMs - 1000);
-      expect(error.resetsAtMs).toBeLessThanOrEqual(before + retryAfterMs + 1000);
-    }
-  });
-
-  it("rate_limited without any reset hint stays a plain error (transient cooldown path)", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ status: "rate_limited", message: "busy" }));
-    try {
-      await requestSession("tok-1", "deepseek/deepseek-v4-flash", null);
-      throw new Error("should have rejected");
-    } catch (error) {
-      expect(error.status).toBeUndefined();
-      expect(error.resetsAtMs).toBeUndefined();
-    }
-  });
-
   it("throws a friendly error on country_blocked", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ status: "country_blocked" }));
     await expect(ensureSession("tok-1", "deepseek/deepseek-v4-flash", null)).rejects.toThrow(
@@ -415,146 +283,6 @@ describe("freebuff session pre-flight", () => {
   it("throws a 401 re-login error when the session endpoint rejects the token", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ error: "unauthorized" }, { status: 401, ok: false }));
     await expect(requestSession("tok-expired", "deepseek/deepseek-v4-flash", null)).rejects.toThrow(/re-login/i);
-  });
-
-  it("surfaces the 2026-09 gate statuses (consent / purchase) instead of a generic HTTP error", async () => {
-    const cases = [
-      ["consent_required", /data-use consent/i],
-      ["purchase_in_use", /already in use/i],
-      ["purchase_capacity", /capacity/i],
-      ["purchase_claim_released", /single-use Desktop purchase claim/i],
-    ];
-    for (const [status, pattern] of cases) {
-      fetchMock.mockReset();
-      fetchMock.mockResolvedValue(jsonResponse({ status }, { status: 409, ok: false }));
-      try {
-        await requestSession("tok-1", "deepseek/deepseek-v4-flash", null);
-        throw new Error(`should have rejected for ${status}`);
-      } catch (error) {
-        expect(error.message).toMatch(pattern);
-        expect(error.code).toBe(status);
-      }
-    }
-  });
-
-  it("classifies consent/purchase gates as NON-reclaimable (no reclaim loop)", async () => {
-    // Mirrors the 2026-09-11 upstream gate family: re-claiming returns the same
-    // answer, so the executor must fail fast rather than force a fresh claim.
-    fetchMock.mockResolvedValue(
-      jsonResponse({ error: "consent_required" }, { status: 409, ok: false }),
-    );
-    const ex = new FreebuffExecutor();
-    const credentials = { accessToken: "tok-1", providerSpecificData: { fingerprintId: "enhanced-fp-1" } };
-    const body = { model: "deepseek/deepseek-v4-flash", messages: [{ role: "user", content: "hi" }] };
-    await expect(
-      ex.execute({ model: body.model, body, stream: false, credentials, log: null }),
-    ).rejects.toThrow(/consent/i);
-    // No chat POST and no run registration happened — the gate was detected on
-    // the claim itself.
-    expect(fetchMock.mock.calls.some(([u]) => u.includes("/agent-runs"))).toBe(false);
-  });
-});
-
-describe("freebuff limited-offer (Claude Fable 5) claims", () => {
-  const FABLE = "anthropic/claude-fable-5";
-  const offerRow = (over = {}) => ({
-    model: FABLE,
-    remaining: 3,
-    total: 10,
-    userRemaining: 1,
-    userResetAt: new Date(Date.now() + 3600000).toISOString(),
-    ...over,
-  });
-
-  it("GETs limitedModelOffers (never claims) and caches them per token", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ status: "none", limitedModelOffers: [offerRow()] }));
-    const offers = await fetchSessionOffers("tok-1", null);
-    expect(offers.map((o) => o.model)).toEqual([FABLE]);
-
-    const [url, opts] = fetchMock.mock.calls[0];
-    expect(url).toBe("https://www.codebuff.com/api/v1/freebuff/session");
-    expect(opts.method).toBe("GET");
-    expect(opts.headers.Authorization).toBe("Bearer tok-1");
-    expect(opts.headers.Accept).toBe("application/json");
-
-    // Second read within the cache TTL does not refetch.
-    await fetchSessionOffers("tok-1", null);
-    expect(fetchMock.mock.calls.length).toBe(1);
-  });
-
-  it("allows the claim while the offer is open", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ status: "none", limitedModelOffers: [offerRow()] }));
-    expect(await guardOfferClaim("tok-1", FABLE, null)).toMatchObject({ model: FABLE, remaining: 3 });
-    expect(fetchMock.mock.calls.length).toBe(1);
-    expect(fetchMock.mock.calls[0][1].method).toBe("GET");
-  });
-
-  it("lets non-offer models claim without any offer GET", async () => {
-    expect(await guardOfferClaim("tok-1", "deepseek/deepseek-v4-flash", null)).toBeNull();
-    expect(fetchMock.mock.calls.length).toBe(0);
-  });
-
-  it("refuses the claim when the wave pool is closed (no offer row)", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ status: "none", limitedModelOffers: [] }));
-    await expect(guardOfferClaim("tok-1", FABLE, null)).rejects.toThrow(/not being offered right now/i);
-  });
-
-  it("refuses the claim when the account's daily Fable sessions are used up", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ status: "none", limitedModelOffers: [offerRow({ userRemaining: 0 })] }),
-    );
-    await expect(guardOfferClaim("tok-1", FABLE, null)).rejects.toThrow(/has used its Claude Fable 5 sessions/i);
-  });
-
-  it("claims a Fable session only after the offer passes: GET offers, then POST claim", async () => {
-    fetchMock.mockImplementation(async (url, opts = {}) => {
-      if (url.includes("/freebuff/session") && opts.method === "GET") {
-        return jsonResponse({ status: "none", limitedModelOffers: [offerRow()] });
-      }
-      if (url.includes("/freebuff/session")) {
-        return jsonResponse({ status: "active", instanceId: "inst-fable", expiresAt: new Date(Date.now() + 3600000).toISOString() });
-      }
-      return jsonResponse({ ok: false }, { status: 500, ok: false });
-    });
-
-    const res = await ensureSession("tok-1", FABLE, null);
-    expect(res).toEqual({ instanceId: "inst-fable", status: "active" });
-
-    const methods = fetchMock.mock.calls.map(([, o]) => o.method);
-    expect(methods).toEqual(["GET", "POST"]);
-    const [, postOpts] = fetchMock.mock.calls[1];
-    expect(postOpts.headers["x-freebuff-model"]).toBe(FABLE);
-
-    // Cached claim → no further requests.
-    await ensureSession("tok-1", FABLE, null);
-    expect(fetchMock.mock.calls.length).toBe(2);
-  });
-
-  it("never POSTs a claim when the Fable wave is closed", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ status: "none", limitedModelOffers: [] }));
-    await expect(ensureSession("tok-1", FABLE, null)).rejects.toThrow(/not being offered right now/i);
-    const methods = fetchMock.mock.calls.map(([, o]) => o.method);
-    expect(methods).toEqual(["GET"]);
-  });
-
-  it("endSession DELETEs the session with the instance header and returns the refund", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ freebucksRefund: 3.2 }));
-    const result = await endSession("tok-1", "inst-1", null);
-    expect(result).not.toBeNull();
-    expect(result.freebucksRefund).toBe(3.2);
-    const [url, opts] = fetchMock.mock.calls[0];
-    expect(url).toBe("https://www.codebuff.com/api/v1/freebuff/session");
-    expect(opts.method).toBe("DELETE");
-    expect(opts.headers["x-freebuff-instance-id"]).toBe("inst-1");
-    expect(opts.headers.Authorization).toBe("Bearer tok-1");
-  });
-
-  it("endSession is best-effort: no instance id, non-ok, or error → null", async () => {
-    expect(await endSession("tok-1", null, null)).toBeNull();
-    fetchMock.mockResolvedValue(jsonResponse({}, { status: 409, ok: false }));
-    expect(await endSession("tok-1", "inst-x", null)).toBeNull();
-    fetchMock.mockRejectedValue(new Error("boom"));
-    expect(await endSession("tok-1", "inst-y", null)).toBeNull();
   });
 });
 
@@ -592,19 +320,10 @@ describe("freebuff free-tier system marker", () => {
 describe("freebuff run registration", () => {
   it("maps freebuff models to their root free agent ids", () => {
     expect(rootAgentIdForModel("deepseek/deepseek-v4-flash")).toBe("base3-free-deepseek-flash");
-    expect(rootAgentIdForModel("z-ai/glm-5.3-flash")).toBe("base3-free-glm-5-3-flash");
-    expect(rootAgentIdForModel("z-ai/glm-5.2")).toBe("base3-free-glm");
+    expect(rootAgentIdForModel("deepseek/deepseek-v4-pro")).toBe("base3-free-deepseek");
     expect(rootAgentIdForModel("mimo/mimo-v2.5")).toBe("base3-free-mimo");
+    expect(rootAgentIdForModel("minimax/minimax-m3")).toBe("base3-free-minimax-m3");
     expect(rootAgentIdForModel("openai/gpt-5.6-luna")).toBe("base3-free-luna");
-    expect(rootAgentIdForModel("upstage/solar-pro4")).toBe("base3-free-solar-pro4");
-    expect(rootAgentIdForModel("meta/muse-spark-1.3-contributor")).toBe("base3-free-muse-spark-1-3");
-    // 1.3 is the live row; 1.2 keeps its own root while admitted sessions drain.
-    expect(rootAgentIdForModel("meta/muse-spark-1.2-contributor")).toBe("base3-free-muse-spark");
-    expect(rootAgentIdForModel("anthropic/claude-fable-5")).toBe("base3-free-fable");
-    // Withdrawn upstream models are unmapped — they fall back, and the backend
-    // refuses their sessions anyway.
-    expect(rootAgentIdForModel("deepseek/deepseek-v4-pro")).toBe("base2-free");
-    expect(rootAgentIdForModel("minimax/minimax-m3")).toBe("base2-free");
     expect(rootAgentIdForModel("some/unknown-model")).toBe("base2-free");
   });
 
@@ -645,19 +364,14 @@ describe("freebuff run registration", () => {
 describe("freebuff executor execute", () => {
   const CHAT_URL = "https://www.codebuff.com/api/v1/chat/completions";
   const SESSION_URL = "https://www.codebuff.com/api/v1/freebuff/session";
-  // Claims go to the dedicated admission route first; the legacy /session path
-  // is only touched when admission answers 404/405 (unsupported server).
-  const ADMISSION_URL = "https://www.codebuff.com/api/v1/freebuff/session/admission";
-  const isSessionClaim = (url) => url === ADMISSION_URL || url === SESSION_URL;
-  const sessionCalls = () => fetchMock.mock.calls.filter(([u]) => isSessionClaim(u));
   const RUN_URL = "https://www.codebuff.com/api/v1/agent-runs";
   const MODEL = "deepseek/deepseek-v4-flash";
-  const credentials = { accessToken: "tok-1", providerSpecificData: { fingerprintId: "enhanced-fp-1" } };
+  const credentials = { accessToken: "tok-1", providerSpecificData: { fingerprintId: "fp-1" } };
 
   // Default happy-path backend: session active, run registered, chat 200.
   const happyPath = () => {
     fetchMock.mockImplementation(async (url) => {
-      if (isSessionClaim(url)) {
+      if (url === SESSION_URL) {
         return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       }
       if (url === RUN_URL) {
@@ -684,7 +398,7 @@ describe("freebuff executor execute", () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
     expect(sent.codebuff_metadata.cost_mode).toBe("free");
-    expect(sent.codebuff_metadata.client_id).toBe("enhanced-fp-1");
+    expect(sent.codebuff_metadata.client_id).toBe("fp-1");
     expect(sent.codebuff).toBeUndefined();
     // Free-tier marker present at position 0 of the request body.
     expect(sent.messages[0].content.startsWith("You are Buffy,")).toBe(true);
@@ -693,7 +407,7 @@ describe("freebuff executor execute", () => {
   it("retries exactly once on 428 with a fresh session AND a fresh run", async () => {
     let chatHits = 0;
     fetchMock.mockImplementation(async (url) => {
-      if (isSessionClaim(url)) {
+      if (url === SESSION_URL) {
         return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       }
       if (url === RUN_URL) {
@@ -710,11 +424,8 @@ describe("freebuff executor execute", () => {
 
     expect(response.status).toBe(200);
     expect(chatHits).toBe(2);
-    // Session touched 3x: initial claim (POST), end-old-session (DELETE),
-    // forced re-claim (POST).
-    expect(sessionCalls().length).toBe(3);
-    const sessionMethods = sessionCalls().map(([, o]) => o.method);
-    expect(sessionMethods).toEqual(["POST", "DELETE", "POST"]);
+    // Session was claimed twice (initial + forced re-claim).
+    expect(fetchMock.mock.calls.filter(([u]) => u === SESSION_URL).length).toBe(2);
     // Runs: START #1, FINISH(cancelled) #1 (abandoned on 428), START #2,
     // FINISH(completed) #2.
     const runCalls = fetchMock.mock.calls.filter(([u]) => u === RUN_URL);
@@ -734,7 +445,7 @@ describe("freebuff executor execute", () => {
   it("re-claims the session on 409 session_superseded and retries once", async () => {
     let chatHits = 0;
     fetchMock.mockImplementation(async (url) => {
-      if (isSessionClaim(url)) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-2" });
       chatHits += 1;
       if (chatHits === 1) {
@@ -749,9 +460,8 @@ describe("freebuff executor execute", () => {
 
     expect(response.status).toBe(200);
     expect(chatHits).toBe(2);
-    // Session touched 3x: claim (POST), end-old (DELETE), re-claim (POST);
-    // runs restarted after the DELETE.
-    expect(sessionCalls().length).toBe(3);
+    // Session re-claimed (initial + forced) and runs restarted.
+    expect(fetchMock.mock.calls.filter(([u]) => u === SESSION_URL).length).toBe(2);
     const runCalls = fetchMock.mock.calls.filter(([u]) => u === RUN_URL);
     expect(runCalls.filter((c) => JSON.parse(c[1].body).action === "START").length).toBe(2);
   });
@@ -759,7 +469,7 @@ describe("freebuff executor execute", () => {
   it("re-claims the session on 410 session_expired and retries once", async () => {
     let chatHits = 0;
     fetchMock.mockImplementation(async (url) => {
-      if (isSessionClaim(url)) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-2" });
       chatHits += 1;
       if (chatHits === 1) return jsonResponse({ error: "session_expired" }, { status: 410, ok: false });
@@ -775,7 +485,7 @@ describe("freebuff executor execute", () => {
 
   it("throws a 401 re-login error when the chat endpoint rejects the token", async () => {
     fetchMock.mockImplementation(async (url) => {
-      if (isSessionClaim(url)) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-1" });
       return jsonResponse({ error: "unauthorized" }, { status: 401, ok: false });
     });
@@ -798,7 +508,7 @@ describe("freebuff executor execute", () => {
     // 400 (not in the 429/502/503 retry set) so the test stays fast and mirrors
     // the real upstream rejection.
     fetchMock.mockImplementation(async (url) => {
-      if (isSessionClaim(url)) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-1" });
       return jsonResponse({ error: "upstream boom" }, { status: 400, ok: false });
     });
@@ -818,7 +528,7 @@ describe("freebuff executor execute", () => {
   it("finishes the run as failed when execute throws mid-flight", async () => {
     // AbortError (caller/stream abort) is never retried, keeping this test fast.
     fetchMock.mockImplementation(async (url) => {
-      if (isSessionClaim(url)) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-1" });
       throw Object.assign(new Error("aborted"), { name: "AbortError" });
     });
@@ -839,7 +549,7 @@ describe("freebuff executor execute", () => {
   it("retries the chat POST on a transient fetch-level network error", async () => {
     let chatHits = 0;
     fetchMock.mockImplementation(async (url) => {
-      if (isSessionClaim(url)) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-1" });
       chatHits += 1;
       if (chatHits === 1) throw new Error("fetch failed (cause: ECONNRESET)");
@@ -862,7 +572,7 @@ describe("freebuff executor execute", () => {
     let chatHits = 0;
     let runStartCount = 0;
     fetchMock.mockImplementation(async (url) => {
-      if (isSessionClaim(url)) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) {
         // First START succeeds (run-1). Every later call fails with the
         // transient ECONNRESET: the fire-and-forget FINISH swallows it, and
@@ -892,30 +602,5 @@ describe("freebuff executor execute", () => {
     const finishes = runCalls.filter(([, o]) => JSON.parse(o.body).action === "FINISH");
     expect(finishes.length).toBe(1);
     expect(JSON.parse(finishes[0][1].body).status).toBe("cancelled");
-  });
-});
-
-describe("freebuff executor parseError", () => {
-  it("explains a 404 'No endpoints found' as the toolset gate, not a credential problem", async () => {
-    const ex = new FreebuffExecutor();
-    const res = jsonResponse(
-      { error: { message: "No endpoints found for deepseek/deepseek-v4-flash.", code: 404, type: null, param: null } },
-      { status: 404, ok: false },
-    );
-    const parsed = await ex.parseError(res, JSON.stringify({ error: { message: "No endpoints found for deepseek/deepseek-v4-flash.", code: 404 } }));
-
-    expect(parsed.status).toBe(404);
-    expect(parsed.message).toMatch(/end_turn/i);
-    expect(parsed.message).not.toMatch(/credential/i);
-    expect(parsed.resetsAtMs).toBeGreaterThan(Date.now());
-  });
-
-  it("passes other statuses through untouched", async () => {
-    const ex = new FreebuffExecutor();
-    const res = jsonResponse({ error: "bad" }, { status: 500, ok: false });
-    const parsed = await ex.parseError(res, JSON.stringify({ error: "bad" }));
-    expect(parsed.status).toBe(500);
-    expect(parsed.message).toContain("bad");
-    expect(parsed.resetsAtMs).toBeUndefined();
   });
 });

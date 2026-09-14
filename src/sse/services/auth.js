@@ -1,13 +1,21 @@
-import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
+import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProviderNodeById, getProxyPools } from "@/lib/localDb";
 import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
+import { classify429 } from "open-sse/utils/classify429.js";
+import { resolveAntigravityProxyConfig } from "open-sse/utils/proxyFetch.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
-import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
+import { resolveProviderId, FREE_PROVIDERS, AI_PROVIDERS, getProviderAlias, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache } from "./antigravityQuota.js";
 import * as log from "../utils/logger.js";
 
-// Mutex to prevent race conditions during account selection
-let selectionMutex = Promise.resolve();
+// Re-export the internal-trust gate so handlers can import it alongside the
+// other ACL helpers. Implementation lives in internalTrust.js (dependency-light
+// + independently unit-tested for exploit resistance).
+export { isTrustedInternalRequest } from "./internalTrust.js";
+
+// Per-provider mutex — allows parallel credential selection across different providers
+// while preventing races within the same provider's account rotation.
+const _providerMutexes = new Map();
 
 export function filterConnectionsForModel(providerId, connections, model, settings = {}) {
   const override = (settings.providerStrategies || {})[providerId] || {};
@@ -21,13 +29,11 @@ export function filterConnectionsForModel(providerId, connections, model, settin
   });
 }
 
-const GITHUB_MONTHLY_USAGE_LIMIT = "you've reached your additional usage limit for your plan";
-
-function githubMonthlyResetMs(status, errorText, provider) {
-  if (resolveProviderId(provider) !== "github" || Number(status) !== 402) return null;
-  if (!String(errorText || "").toLowerCase().includes(GITHUB_MONTHLY_USAGE_LIMIT)) return null;
-  const now = new Date();
-  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+function getProviderMutex(provider) {
+  if (!_providerMutexes.has(provider)) {
+    _providerMutexes.set(provider, Promise.resolve());
+  }
+  return _providerMutexes.get(provider);
 }
 
 /**
@@ -43,10 +49,10 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     ? excludeConnectionIds
     : (excludeConnectionIds ? new Set([excludeConnectionIds]) : new Set());
   const preferredConnectionId = options?.preferredConnectionId || null;
-  // Acquire mutex to prevent race conditions
-  const currentMutex = selectionMutex;
+  // Acquire per-provider mutex to prevent race conditions within same provider
+  const currentMutex = getProviderMutex(provider);
   let resolveMutex;
-  selectionMutex = new Promise(resolve => { resolveMutex = resolve; });
+  _providerMutexes.set(provider, new Promise(resolve => { resolveMutex = resolve; }));
 
   try {
     await currentMutex;
@@ -63,14 +69,17 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       if (strategy !== "none") {
         const allPools = await getProxyPools({ isActive: true });
         const poolIds = allPools.filter(p => p.proxyUrl).map(p => p.id);
-        pickedId = pickProxyPoolId(poolIds, strategy, providerId);
+        const scope = `${providerId}::${model || "*"}`;
+        pickedId = pickProxyPoolId(poolIds, strategy, providerId, { scope });
       }
       const resolvedProxy = await resolveConnectionProxyConfig({ proxyPoolId: pickedId || "" });
+      const selectedPoolIds = strategy !== "none"
+        ? (await getProxyPools({ isActive: true })).filter((p) => p.proxyUrl).map((p) => p.id)
+        : [];
       return {
         id: "noauth",
         connectionName: "Public",
         isActive: true,
-        authType: "none",
         accessToken: "public",
         providerSpecificData: {
           connectionProxyEnabled: resolvedProxy.connectionProxyEnabled,
@@ -78,14 +87,18 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           connectionNoProxy: resolvedProxy.connectionNoProxy,
           connectionProxyPoolId: resolvedProxy.proxyPoolId || null,
           vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
-          relayType: resolvedProxy.relayType || "",
+          proxyPoolId: resolvedProxy.proxyPoolId || null,
+          strictProxy: resolvedProxy.strictProxy === true,
+          proxyPoolIds: selectedPoolIds,
+          proxyRotationStrategy: strategy,
+          proxyPoolScope: `${providerId}::${model || "*"}`,
         },
       };
     }
 
     let connections = await getProviderConnections({ provider: providerId, isActive: true });
-    const modelFilterSettings = await getSettings();
-    connections = filterConnectionsForModel(providerId, connections, model, modelFilterSettings);
+    const settings = await getSettings();
+    connections = filterConnectionsForModel(providerId, connections, model, settings);
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
 
     if (connections.length === 0) {
@@ -97,7 +110,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const isAntigravity = providerId === "antigravity";
     const antigravityQuotaCache = isAntigravity && model ? getAntigravityQuotaCache() : null;
 
-    // Filter out model-locked, excluded, and Antigravity quota-exhausted connections.
+    // Filter out model-locked, excluded, and Antigravity quota-exhausted connections
     const availableConnections = connections.filter(c => {
       if (excludeSet.has(c.id)) return false;
       if (isModelLockActive(c, model)) return false;
@@ -124,33 +137,32 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     });
 
     if (availableConnections.length === 0) {
-      // Find earliest persistent lock or lazy Antigravity quota-cache reset for retry timing.
+      // Find earliest persistent lock or lazy Antigravity quota-cache reset for retry timing
       const lockedConns = connections.filter(c => isModelLockActive(c, model));
-      const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
+      const expiries = lockedConns.flatMap(c => { const t = getEarliestModelLockUntil(c); return t ? [t] : []; });
       if (isAntigravity && model && antigravityQuotaCache) {
         connections.forEach((c) => {
           const resetAt = antigravityQuotaCache.get(c.id)?.[model]?.resetAt;
           if (resetAt && new Date(resetAt).getTime() > Date.now()) expiries.push(resetAt);
         });
       }
-      const earliest = expiries.sort()[0] || null;
+      const earliest = expiries.length > 0 ? expiries.reduce((a, b) => a < b ? a : b) : null;
       if (earliest) {
-        const earliestConn = lockedConns.find((c) => getEarliestModelLockUntil(c) === earliest) || lockedConns[0];
-        const errorMatchesModel = earliestConn?.lastErrorModel === (model || null);
-        log.warn("AUTH", `${provider} | all ${connections.length} accounts locked for ${model || "all"} (${formatRetryAfter(earliest)}) | lastError=${errorMatchesModel ? earliestConn?.lastError?.slice(0, 50) : "<withheld>"}`);
+        const earliestConn = lockedConns[0];
+        log.warn("AUTH", `${provider} | all ${connections.length} accounts locked for ${model || "all"} (${formatRetryAfter(earliest)}) | lastError=${earliestConn?.lastError?.slice(0, 50)}`);
         return {
           allRateLimited: true,
+          connectionId: earliestConn?.id || null,
           retryAfter: earliest,
           retryAfterHuman: formatRetryAfter(earliest),
-          lastError: errorMatchesModel ? earliestConn?.lastError || null : null,
-          lastErrorCode: errorMatchesModel ? earliestConn?.errorCode || null : null
+          lastError: earliestConn?.lastError || null,
+          lastErrorCode: earliestConn?.errorCode || null
         };
       }
       log.warn("AUTH", `${provider} | all ${connections.length} accounts unavailable`);
       return null;
     }
 
-    const settings = await getSettings();
     // Per-provider strategy overrides global setting
     const providerOverride = (settings.providerStrategies || {})[providerId] || {};
     const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "fill-first";
@@ -169,7 +181,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       const stickyLimit = providerOverride.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 3;
 
       // Sort by lastUsed (most recent first) to find current candidate
-      const byRecency = [...availableConnections].sort((a, b) => {
+      const byRecency = availableConnections.toSorted((a, b) => {
         if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
         if (!a.lastUsedAt) return 1;
         if (!b.lastUsedAt) return -1;
@@ -189,7 +201,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         });
       } else {
         // Pick the least recently used (excluding current if possible)
-        const sortedByOldest = [...availableConnections].sort((a, b) => {
+        const sortedByOldest = availableConnections.toSorted((a, b) => {
           if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
           if (!a.lastUsedAt) return -1;
           if (!b.lastUsedAt) return 1;
@@ -209,7 +221,14 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       connection = availableConnections[0];
     }
 
-    const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
+    const psdForProxy = providerId === "freebuff"
+      ? { ...(connection.providerSpecificData || {}), proxyPoolScope: `${providerId}::${model || ""}` }
+      : connection.providerSpecificData?.proxyPoolIds?.length
+        ? { ...connection.providerSpecificData, proxyPoolScope: `${providerId}::${model || ""}` }
+        : connection.providerSpecificData;
+    const resolvedProxy = providerId === "antigravity"
+      ? resolveAntigravityProxyConfig(psdForProxy)
+      : await resolveConnectionProxyConfig(psdForProxy || {}, connection.id);
 
     return {
       authType: connection.authType,
@@ -230,10 +249,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         connectionNoProxy: resolvedProxy.connectionNoProxy,
         connectionProxyPoolId: resolvedProxy.proxyPoolId || null,
         vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
-        // Actual relay kind (vercel|cloudflare|deno) — `vercelRelayUrl` is the
-        // shared transport field name, not the pool's type. Used for log/UI
-        // labelling only; routing still reads vercelRelayUrl.
-        relayType: resolvedProxy.relayType || "",
+        proxyPoolId: resolvedProxy.proxyPoolId || null,
+        noFitPool: resolvedProxy.noFitPool === true,
+        strictProxy: resolvedProxy.strictProxy === true,
       },
       connectionId: connection.id,
       // Include current status for optimization check
@@ -257,58 +275,61 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
  * @param {string|null} model - The specific model that triggered the error
  * @returns {{ shouldFallback: boolean, cooldownMs: number }}
  */
-export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null) {
+export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null, options = {}) {
   if (!connectionId || connectionId === "noauth") return { shouldFallback: false, cooldownMs: 0 };
   const connections = await getProviderConnections({ provider });
   const conn = connections.find(c => c.id === connectionId);
   const backoffLevel = conn?.backoffLevel || 0;
 
-  // GitHub premium-request exhaustion is account-wide until the next UTC month.
-  const githubResetAtMs = githubMonthlyResetMs(status, errorText, provider);
-
   // Provider-specific precise cooldown (e.g. codex usage_limit_reached resets_at) overrides backoff
   let shouldFallback, cooldownMs, newBackoffLevel;
-  if (githubResetAtMs) {
+  const isA6 = provider === "a6api" || provider === "a6api-cli";
+  if (isA6 && status !== 401 && status !== 402 && status !== 404) {
     shouldFallback = true;
-    cooldownMs = githubResetAtMs - Date.now();
+    cooldownMs = 3000; // 3 seconds cooldown for all non-401/402/404 errors
     newBackoffLevel = 0;
   } else if (resetsAtMs && resetsAtMs > Date.now()) {
     shouldFallback = true;
     // Antigravity quota API provides exact per-model resetAt. Do not truncate it.
-    // Freebucks exhaustion is likewise a hard stop until the daily Pacific
-    // reset (up to ~24h) — skip the account for the day rather than re-poke it
-    // every 30 min; guard at 26h so a bad server value can't lock forever.
-    const providerId = resolveProviderId(provider);
-    cooldownMs = providerId === "antigravity"
+    cooldownMs = resolveProviderId(provider) === "antigravity"
       ? resetsAtMs - Date.now()
-      : providerId === "freebuff"
-        ? Math.min(resetsAtMs - Date.now(), 26 * 60 * 60 * 1000)
-        // TokenHarbor free tier is a rolling 7-day period — the model is hard-exhausted
-        // until the next window. Re-poking every 30min just burns 429s. Guard at 8d so
-        // a bad server value can't lock forever.
-        : providerId === "tokenharbor"
-          ? Math.min(resetsAtMs - Date.now(), 8 * 24 * 60 * 60 * 1000)
-          // Cline free tier is a daily allowance ("Daily free limit reached …
-          // Try again in 19h 46m") — hard-exhausted until the ~24h window rolls.
-          // Guard at 26h so a bad server value can't lock the model forever.
-          : providerId === "cline"
-            ? Math.min(resetsAtMs - Date.now(), 26 * 60 * 60 * 1000)
-            : Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS);
+      : Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS);
     newBackoffLevel = 0;
+  } else if (status === 429) {
+    // Use classify429 for all 429 responses so rate_limit, quota_exhausted,
+    // and daily_quota get deterministic, semantically correct cooldowns
+    // instead of generic exponential backoff. This also prevents the daily
+    // quota lock set earlier in the request path from being overwritten with
+    // a shorter backoff cooldown.
+    const classification = classify429({ status, body: errorText, provider });
+    shouldFallback = true;
+    cooldownMs = classification.cooldownMs;
+    newBackoffLevel = backoffLevel;
   } else {
     ({ shouldFallback, cooldownMs, newBackoffLevel } = checkFallbackError(status, errorText, backoffLevel));
   }
   if (!shouldFallback) return { shouldFallback: false, cooldownMs: 0 };
 
+  // When the circuit-breaker / loop-guard toggle is OFF, do NOT write a per-account
+  // model lock (mirrors chat behavior when the toggle is disabled). We still return
+  // shouldFallback so the request falls through to the next account/provider, but we
+  // leave the account lock state untouched.
+  const disableLock = options && options.disableLock === true;
+
   const reason = typeof errorText === "string" ? errorText.slice(0, 100) : "Provider error";
-  const lockUpdate = buildModelLockUpdate(githubResetAtMs ? null : model, cooldownMs);
+
+  if (disableLock) {
+    // Toggle OFF: skip the lock write entirely so the account stays usable.
+    return { shouldFallback: true, cooldownMs };
+  }
+
+  const lockUpdate = buildModelLockUpdate(model, cooldownMs);
 
   await updateProviderConnection(connectionId, {
     ...lockUpdate,
     testStatus: "unavailable",
     lastError: reason,
     errorCode: status,
-    lastErrorModel: model || null,
     lastErrorAt: new Date().toISOString(),
     backoffLevel: newBackoffLevel ?? backoffLevel
   });
@@ -317,11 +338,7 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   const connName = conn?.displayName || conn?.name || conn?.email || connectionId.slice(0, 8);
   log.warn("AUTH", `${connName} locked ${lockKey} for ${Math.round(cooldownMs / 1000)}s [${status}]`);
 
-  // Pacing rejects (429 "Freebuff pacing") are expected control-flow — the
-  // bounded wait retries the same account. Skip the loud ❌ line for those;
-  // the [AUTH] lock warn above already covers it. Real errors still log.
-  const isPacingSkip = status === 429 && /Freebuff pacing/i.test(reason);
-  if (provider && status && reason && !isPacingSkip) {
+  if (provider && status && reason) {
     console.error(`❌ ${provider} [${status}]: ${reason}`);
   }
 
@@ -370,7 +387,6 @@ export async function clearAccountError(connectionId, currentConnection, model =
       testStatus: "active",
       lastError: null,
       errorCode: null,
-      lastErrorModel: null,
       lastErrorAt: null,
       backoffLevel: 0
     });
@@ -399,9 +415,78 @@ export function extractApiKey(request) {
 }
 
 /**
- * Validate API key (optional - for local use can skip)
+ * Validate API key and return key info (including allowedProviders)
+ * Returns null if invalid, or the key object if valid
  */
-export async function isValidApiKey(apiKey, requestedModel = null, clientIp = null) {
-  if (!apiKey) return false;
-  return await validateApiKey(apiKey, requestedModel, clientIp);
+export async function isValidApiKey(apiKey) {
+  if (!apiKey) return null;
+  return await validateApiKey(apiKey);
 }
+
+/**
+ * Check if a provider is allowed for a given API key info object.
+ * null = all allowed (default). [] = none allowed. [x] = only x.
+ *
+ * For openai-compatible / anthropic-compatible / custom-embedding providers
+ * (whose ids embed a UUID suffix), the connection's node prefix is also
+ * accepted as a match — the UUID-suffixed id is not user-meaningful and
+ * /v1/models lists these under their prefix alias.
+ */
+const _nodePrefixCache = new Map(); // id -> { prefix, expires }
+const NODE_PREFIX_CACHE_TTL_MS = 30000;
+async function getNodePrefix(providerId) {
+  const cached = _nodePrefixCache.get(providerId);
+  if (cached && cached.expires > Date.now()) return cached.prefix;
+  try {
+    const node = await getProviderNodeById(providerId);
+    const prefix = node?.prefix || null;
+    _nodePrefixCache.set(providerId, { prefix, expires: Date.now() + NODE_PREFIX_CACHE_TTL_MS });
+    return prefix;
+  } catch {
+    _nodePrefixCache.set(providerId, { prefix: null, expires: Date.now() + NODE_PREFIX_CACHE_TTL_MS });
+    return null;
+  }
+}
+export async function isProviderAllowed(apiKeyInfo, providerIdOrAlias) {
+  if (!apiKeyInfo) return true;
+  const allowed = apiKeyInfo.allowedProviders;
+  if (allowed === null || allowed === undefined) return true; // null = all
+  if (!Array.isArray(allowed) || allowed.length === 0) return false; // [] = none
+  if (allowed.includes(providerIdOrAlias)) return true;
+  const alias = getProviderAlias(providerIdOrAlias);
+  if (alias !== providerIdOrAlias && allowed.includes(alias)) return true;
+  const resolvedId = resolveProviderId(providerIdOrAlias);
+  if (resolvedId !== providerIdOrAlias && allowed.includes(resolvedId)) return true;
+  if (isOpenAICompatibleProvider(providerIdOrAlias) || isAnthropicCompatibleProvider(providerIdOrAlias) || isCustomEmbeddingProvider(providerIdOrAlias)) {
+    const prefix = await getNodePrefix(providerIdOrAlias);
+    if (prefix && allowed.includes(prefix)) return true;
+  }
+  return false;
+}
+
+/**
+ * Check if a combo name is allowed for a given API key.
+ * null = all allowed (default). [] = none allowed. [x] = only x.
+ */
+export function isComboAllowed(apiKeyInfo, comboName) {
+  if (!apiKeyInfo) return true;
+  const name = comboName.startsWith("combo/") ? comboName.slice(6) : comboName;
+  const allowed = apiKeyInfo.allowedCombos;
+  if (allowed === null || allowed === undefined) return true;
+  if (!Array.isArray(allowed) || allowed.length === 0) return false;
+  return allowed.includes(name);
+}
+
+/**
+ * Check if a request kind is allowed for a given API key.
+ * Kinds: "llm", "embedding", "image", "tts", "stt", "web"
+ * null = all allowed (default). [] = none allowed. [x] = only x.
+ */
+export function isKindAllowed(apiKeyInfo, kind) {
+  if (!apiKeyInfo) return true;
+  const allowed = apiKeyInfo.allowedKinds;
+  if (allowed === null || allowed === undefined) return true; // null = all
+  if (!Array.isArray(allowed) || allowed.length === 0) return false; // [] = none
+  return allowed.includes(kind);
+}
+

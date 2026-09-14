@@ -1,12 +1,14 @@
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS, PROVIDER_OAUTH } from "../config/providers.js";
-import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE, selectAnthropicBeta } from "../providers/shared.js";
-import { resolveOpenAICompatibleApiType } from "../services/provider.js";
+import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 import { OAUTH_ENDPOINTS, buildKimiHeaders } from "../config/appConstants.js";
-import { buildClineHeaders, getAlternateClineToken, clineTokenShape } from "../shared/clineAuth.js";
+import { buildClineHeaders } from "../shared/clineAuth.js";
+import { getCachedClaudeHeaders } from "../utils/claudeHeaderCache.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
+import { getCapabilitiesForModel } from "../providers/capabilities.js";
+import { getKimchiUserAgent } from "../utils/kimchiUserAgent.js";
 
 // Auth header descriptors — derived from registry transport.auth, fallback to hardcoded defaults.
 const BEARER = { combined: true, header: "Authorization", scheme: "bearer" };
@@ -40,11 +42,24 @@ function applyAuth(headers, desc, credentials) {
 const HEADER_HOOKS = {
   // Stable device_id from OAuth connection (CLIProxyAPI KimiTokenStorage.DeviceID)
   kimiHeaders: (h, c) => Object.assign(h, buildKimiHeaders(c?.providerSpecificData?.deviceId)),
-  // `clineAuthShape` is set by execute() when retrying after a 401, to force the
-  // other token shape (see clineAuth.js: login-minted tokens go raw, refresh-minted
-  // ones need the `workos:` prefix, and the prediction can be wrong).
-  clineHeaders: (h, c) => Object.assign(h, buildClineHeaders(c.apiKey || c.accessToken, {}, { shape: c?.clineAuthShape })),
+  kimchiHeaders: (h) => { h["User-Agent"] = getKimchiUserAgent(); },
+  clineHeaders: (h, c) => Object.assign(h, buildClineHeaders(c.apiKey || c.accessToken)),
   kilocodeOrg: (h, c) => { if (c.providerSpecificData?.orgId) h["X-Kilocode-OrganizationID"] = c.providerSpecificData.orgId; },
+  claudeOverlay: (h) => {
+    const cached = getCachedClaudeHeaders();
+    if (!cached) return;
+    for (const lcKey of Object.keys(cached)) {
+      const titleKey = lcKey.replace(/(^|-)([a-z])/g, (_, sep, ch) => sep + ch.toUpperCase());
+      if (lcKey === "anthropic-beta") {
+        const staticBetaStr = h[titleKey] || h[lcKey] || "";
+        const flags = new Set(staticBetaStr.split(",").map(f => f.trim()).filter(Boolean));
+        for (const f of cached[lcKey].split(",").map(f => f.trim()).filter(Boolean)) flags.add(f);
+        h[titleKey] = Array.from(flags).join(",");
+      }
+      if (titleKey !== lcKey && h[titleKey] !== undefined) delete h[titleKey];
+    }
+    Object.assign(h, cached);
+  },
 };
 
 // Config-driven OAuth refresh grants — derived from registry oauth.refresh.
@@ -65,9 +80,79 @@ const REFRESH_GRANTS = Object.fromEntries(
     })
 );
 
+const TRANSIENT_BODY_PATTERNS = [/Hosted_vllmException/i, /Server disconnected/i, /exhausted/i];
+const TRANSIENT_BODY_MAX_ATTEMPTS = 5;
+const TRANSIENT_BODY_DELAY_MS = 1500;
+
 export class DefaultExecutor extends BaseExecutor {
   constructor(provider) {
     super(provider, PROVIDERS[provider] || PROVIDERS.openai);
+  }
+
+  async execute(args) {
+    const accountCount = args.accountCount || 0;
+    const maxAttempts = accountCount >= 5 ? 1 : (accountCount >= 3 ? 2 : TRANSIENT_BODY_MAX_ATTEMPTS);
+    let attempt = 0;
+    while (true) {
+      const result = await super.execute(args);
+      attempt++;
+      if (attempt >= maxAttempts) return result;
+      // Streams bypass body peeking: buffering up to 8KB here delays TTFT.
+      if (args.stream || !result.response?.ok || result.response.status >= 500) return result;
+      const peek = await this._peekTransientBodyError(result.response);
+      if (!peek.matched) {
+        if (peek.replacementBody) {
+          result.response = new Response(peek.replacementBody, {
+            status: result.response.status,
+            statusText: result.response.statusText,
+            headers: result.response.headers,
+          });
+        }
+        return result;
+      }
+      args.log?.warn?.("RETRY", `${this.provider.toUpperCase()} | transient body error "${peek.matched.slice(0, 60)}" — retry ${attempt}/${maxAttempts}`);
+      try { await result.response.body?.cancel?.(); } catch {}
+      await new Promise(r => setTimeout(r, TRANSIENT_BODY_DELAY_MS));
+    }
+  }
+
+  async _peekTransientBodyError(response) {
+    if (!response?.body) return { matched: null, replacementBody: null };
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const chunks = [];
+    let text = "";
+    let matched = null;
+    try {
+      while (text.length < 8192) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        text += decoder.decode(value, { stream: true });
+        const hit = TRANSIENT_BODY_PATTERNS.find(p => p.test(text));
+        if (hit) { matched = text.slice(text.search(hit), text.search(hit) + 80); break; }
+      }
+    } catch {}
+    reader.releaseLock();
+    const upstream = response.body;
+    let upstreamReader = null;
+    const replacementBody = new ReadableStream({
+      start(controller) {
+        for (const c of chunks) controller.enqueue(c);
+        upstreamReader = upstream.getReader();
+      },
+      async pull(controller) {
+        try {
+          const { done, value } = await upstreamReader.read();
+          if (done) { controller.close(); return; }
+          controller.enqueue(value);
+        } catch (e) { controller.error(e); }
+      },
+      cancel(reason) {
+        try { upstreamReader?.cancel(reason); } catch {}
+      },
+    });
+    return { matched, replacementBody };
   }
 
   transformRequest(model, body) {
@@ -79,9 +164,53 @@ export class DefaultExecutor extends BaseExecutor {
         delete transformed.client_metadata;
       }
       stripUnsupportedParams(this.provider, model, transformed);
+      // NVIDIA NIM kimi-k2.x degenerates (loops / empty output) when max_tokens is
+      // very large (>=~32k). Clamp oversized client values to a safe ceiling; smaller
+      // values pass through unchanged and absent max_tokens is never injected. Mirrors
+      // the contract in tests/unit/kimi-max-tokens.test.js (commit 3dd7a9e5, since
+      // reverted via the registry consolidation refactor).
+      //
+      // CLI-derived refinement: the Kimi CLI catalog (models.dev) advertises an
+      // output limit of 16384 for kimi-k2.6, so we raise its ceiling from 8192 while
+      // still staying below the observed degeneration threshold (~32k). k2.7 variants
+      // remain clamped at 8192 because no similarly safe published limit is available.
+      if (this.provider === "nvidia") {
+        if (/kimi-k2\.6/i.test(model) && typeof transformed.max_tokens === "number" && transformed.max_tokens > 16384) {
+          transformed.max_tokens = 16384;
+        } else if (/kimi-k2\.7/i.test(model) && typeof transformed.max_tokens === "number" && transformed.max_tokens > 8192) {
+          transformed.max_tokens = 8192;
+        }
+      }
     }
 
-    return injectReasoningContent({ provider: this.provider, model, body: transformed });
+    const withReasoning = injectReasoningContent({ provider: this.provider, model, body: transformed });
+    return this.ensureThinkingBudget(withReasoning, model);
+  }
+
+  // ClinePass / OpenRouter-style thinking models burn all of max_tokens on reasoning
+  // when the budget is too small, leaving content empty (finish_reason: "length").
+  // Bump max_tokens to a safe minimum only when reasoning is enabled and budget undersized.
+  ensureThinkingBudget(body, model) {
+    if (!body || this.provider !== "clinepass") return body;
+    const caps = getCapabilitiesForModel(this.provider, model);
+    if (!caps?.reasoning) return body;
+
+    const reasoningEnabled = body.extra_body?.thinking?.type === "enabled"
+      || (typeof body.reasoning_effort === "string" && body.reasoning_effort !== "none" && body.reasoning_effort !== "off")
+      || body.reasoning_effort === true;
+    if (!reasoningEnabled) return body;
+
+    const MIN_TOKENS = 4096;
+    const cap = typeof caps.maxOutput === "number" && caps.maxOutput > 0 ? caps.maxOutput : MIN_TOKENS;
+    const target = Math.min(MIN_TOKENS, cap);
+    const current = body.max_tokens ?? body.max_completion_tokens;
+
+    if (typeof current !== "number" || current <= 0) {
+      body.max_tokens = target;
+    } else if (current < MIN_TOKENS && current < cap) {
+      body.max_tokens = MIN_TOKENS;
+    }
+    return body;
   }
 
   // Fallback json_schema → json_object for openai-compatible providers without native Structured Output.
@@ -104,46 +233,6 @@ export class DefaultExecutor extends BaseExecutor {
     return { ...body, messages, response_format: { type: "json_object" } };
   }
 
-  // TokenHarbor free-tier 429 carries a precise reset: "Your next rolling
-  // 7-day period starts at 2026-09-12T13:14:06.634411+00:00". Extract it so
-  // markAccountUnavailable locks the model until the period rolls, not a 30m cap.
-parseError(response, bodyText) {
-    if (response.status === 429 && bodyText) {
-      // Tight ISO-8601 capture: date T time ('.'fraction) offset/Z, ending on a digit
-      // so a trailing sentence period can't be swallowed into Date.parse.
-      const iso = /\d{4}-\d{2}-\d{2}T[\d:]+(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)/i;
-      const m = bodyText.match(new RegExp(`(?:next|new)\\s+(?:rolling\\s+)?\\d+-day\\s+period\\s+starts\\s+at\\s+(${iso.source})`, "i"))
-        || bodyText.match(new RegExp(`(?:resets?|next)\\s+(?:at|on)\\s+(${iso.source})`, "i"));
-      if (m) {
-        const resetMs = Date.parse(m[1]);
-        if (Number.isFinite(resetMs) && resetMs > Date.now()) {
-          return { status: 429, message: bodyText, resetsAtMs: resetMs };
-        }
-      }
-      // Relative retry window instead of an absolute timestamp: Cline's free
-      // daily cap → "Try again in 19h 46m". Convert to an absolute reset so
-      // markAccountUnavailable locks until the window passes, not a 2m backoff.
-      const rel = bodyText.match(/try\s+again\s+in\s+(\d+h(?:\s*\d+m)?(?:\s*\d+s)?|\d+m(?:\s*\d+s)?|\d+s)/i);
-      if (rel) {
-        const parts = rel[1].toLowerCase().match(/\d+[hms]/g);
-        let seconds = 0;
-        if (parts) {
-          for (const p of parts) {
-            const v = Number(p.slice(0, -1));
-            if (p.endsWith("h")) seconds += v * 3600;
-            else if (p.endsWith("m")) seconds += v * 60;
-            else seconds += v;
-          }
-        }
-        if (seconds > 0) {
-          const resetMs = Date.now() + seconds * 1000;
-          return { status: 429, message: bodyText, resetsAtMs: resetMs };
-        }
-      }
-    }
-    return super.parseError(response, bodyText);
-  }
-
   buildUrl(model, stream, urlIndex = 0, credentials = null) {
     // Runtime transport (multi-endpoint providers): use the sourceFormat-matched endpoint
     const rt = credentials?.runtimeTransport;
@@ -153,7 +242,7 @@ parseError(response, bodyText) {
     if (this.provider?.startsWith?.("openai-compatible-")) {
       const baseUrl = credentials?.providerSpecificData?.baseUrl || OPENAI_COMPAT_BASE;
       const normalized = baseUrl.replace(/\/$/, "");
-      const path = resolveOpenAICompatibleApiType(this.provider, credentials) === "responses" ? "/responses" : "/chat/completions";
+      const path = this.provider.includes("responses") ? "/responses" : "/chat/completions";
       return `${normalized}${path}`;
     }
     if (this.provider?.startsWith?.("anthropic-compatible-")) {
@@ -170,10 +259,10 @@ parseError(response, bodyText) {
       return `${this.config.baseUrl}${this.config.urlSuffix}`;
     }
     const url = this.config.baseUrl;
-    if (url?.includes("{accountId}")) {
-      const accountId = credentials?.providerSpecificData?.accountId;
+    if (url?.includes("{accountId}") || url?.includes("{account}")) {
+      const accountId = credentials?.providerSpecificData?.accountId || credentials?.providerSpecificData?.account;
       if (!accountId) throw new Error(`${this.provider} requires accountId in providerSpecificData`);
-      return url.replace("{accountId}", accountId);
+      return url.replace("{accountId}", accountId).replace("{account}", accountId);
     }
     return url;
   }
@@ -189,42 +278,14 @@ parseError(response, bodyText) {
     return BEARER;
   }
 
-  buildHeaders(credentials, stream = true, url, model) {
+  buildHeaders(credentials, stream = true) {
     const rt = credentials?.runtimeTransport;
     const headers = { "Content-Type": "application/json", ...(rt ? rt.headers : this.config.headers) };
-    // Public no-auth providers may declare an upstream sentinel in their
-    // registry headers (AI Horde uses Bearer 0000000000). Do not replace it
-    // with the local synthetic token `public`.
-    const isSyntheticPublicCredential =
-      (credentials?.id === "noauth" || credentials?.connectionId === "noauth") &&
-      !credentials?.apiKey &&
-      (!credentials?.accessToken || credentials.accessToken === "public");
-    if (credentials?.authType === "none" && isSyntheticPublicCredential) {
-      if (stream) headers["Accept"] = "text/event-stream";
-      return headers;
-    }
     const desc = rt?.auth || AUTH_DESCRIPTORS[this.provider] || this.resolveAuthDescriptor();
-    // Base auth first, then hooks: a hook exists precisely to refine what the
-    // generic descriptor produced (Cline needs its WorkOS `workos:` token prefix,
-    // Kimi needs its device id), so running it first meant applyAuth overwrote the
-    // refinement and the request went out with the raw token.
+    // Hooks run BEFORE auth so dynamic overlays (claude cached headers) can't clobber the token.
+    const hooks = desc.hooks || desc.apiKey?.hooks || desc.oauth?.hooks || [];
+    for (const hook of hooks) HEADER_HOOKS[hook]?.(headers, credentials);
     applyAuth(headers, desc, credentials);
-    for (const hook of desc.hooks || []) HEADER_HOOKS[hook]?.(headers, credentials);
-
-    // anthropic-compatible-* nodes serving a real Claude model sit in front of
-    // Anthropic itself (a rotating multi-account proxy, a corporate gateway),
-    // so the request needs the same beta flags the `claude` provider sends:
-    // without `context-management-2025-06-27` upstream rejects the
-    // `context_management` block Claude Code puts in every request with
-    // "context_management: Extra inputs are not permitted" (HTTP 400), and the
-    // combo silently falls through to the next model. The model id gates this:
-    // a node fronting Kimi or GLM answers on its own ids and never matches, so
-    // gateways that would choke on unknown beta flags are left untouched.
-    const isClaudeModel = typeof model === "string" && /^claude-/.test(model);
-    if (model && (this.provider === "claude"
-      || (this.provider?.startsWith?.("anthropic-compatible-") && isClaudeModel))) {
-      headers["Anthropic-Beta"] = selectAnthropicBeta(model);
-    }
 
     // Strip first-party Claude Code identity headers for non-Anthropic anthropic-compatible upstreams
     if (this.provider?.startsWith?.("anthropic-compatible-")) {
@@ -259,46 +320,8 @@ parseError(response, bodyText) {
       }
     }
 
-    if (stream) headers["Accept"] = "text/event-stream";
+    if (stream && !this.config.preserveAccept) headers["Accept"] = "text/event-stream";
     return headers;
-  }
-
-  /**
-   * Cline-only: on a 401, retry once with the token's other wire shape.
-   *
-   * Cline accepts the same access token either bare or with a `workos:` prefix,
-   * and which one works depends on how the token was minted — login-minted goes
-   * bare, refresh-minted needs the prefix. clineAuth.js predicts from the JWT
-   * claims, but a prediction that misses would otherwise cost the account until
-   * someone re-authenticates; the wrong shape answers 401 and the right one 200,
-   * so switching once converts that into a single extra round trip.
-   *
-   * Mutates `credentials.clineAuthShape` as the flag AND to persist the working
-   * choice: the token in the database is the one Cline keeps reissuing, so the
-   * next request starts from the shape that just succeeded instead of re-probing.
-   * Returns false when there is no other shape to try (opaque `clp_` keys, or a
-   * second 401 on the same token) so the caller falls through to normal error
-   * handling.
-   */
-  async retryAlternativeAuth(credentials, log) {
-    if (this.provider !== "cline" && this.provider !== "clinepass") return false;
-
-    const token = credentials?.apiKey || credentials?.accessToken;
-    if (!token) return false;
-
-    // Already switched once for this request — do not loop.
-    if (credentials.clineAuthShape) return false;
-
-    const alternate = getAlternateClineToken(token);
-    if (!alternate) return false;
-
-    const nextShape = clineTokenShape(alternate);
-    credentials.clineAuthShape = nextShape;
-    credentials.accessToken = alternate;
-    if (credentials.apiKey) credentials.apiKey = alternate;
-
-    log?.debug?.("AUTH", `CLINE | 401 on ${clineTokenShape(token)} token, retrying as ${nextShape}`);
-    return true;
   }
 
   // Generic OAuth refresh for the common {grant_type, refresh_token, client_id[, ...]} shape.
@@ -317,6 +340,7 @@ parseError(response, bodyText) {
     const refreshers = {
       claude: () => this.refreshFromGrant(credentials, proxyOptions),
       codex: () => this.refreshFromGrant(credentials, proxyOptions),
+      qwen: () => this.refreshWithForm(OAUTH_ENDPOINTS.qwen.token, { grant_type: "refresh_token", refresh_token: credentials.refreshToken, client_id: PROVIDERS.qwen.clientId }, proxyOptions),
       iflow: () => this.refreshIflow(credentials.refreshToken, proxyOptions),
       gemini: () => this.refreshFromGrant(credentials, proxyOptions),
       kiro: () => this.refreshKiro(credentials.refreshToken, proxyOptions),
@@ -324,8 +348,7 @@ parseError(response, bodyText) {
       clinepass: () => this.refreshCline(credentials.refreshToken, proxyOptions),
       kimi: () => this.refreshKimi(credentials, proxyOptions),
       "kimi-coding": () => this.refreshKimi(credentials, proxyOptions),
-      kilocode: () => this.refreshKilocode(credentials.refreshToken, proxyOptions),
-      nous: () => this.refreshNousPortal(credentials, proxyOptions)
+      kilocode: () => this.refreshKilocode(credentials.refreshToken, proxyOptions)
     };
 
     const refresher = refreshers[this.provider];
@@ -402,25 +425,6 @@ parseError(response, bodyText) {
       accessToken = `workos:${accessToken}`;
     }
     return { accessToken, refreshToken: data?.refreshToken || refreshToken, expiresIn };
-  }
-
-  // Nous Portal: refresh token carried in X-Nous-Refresh-Token header (not body).
-  async refreshNousPortal(credentials, proxyOptions = null) {
-    const refreshToken = credentials.refreshToken;
-    const cfg = PROVIDER_OAUTH["nous"];
-    if (!cfg?.refreshUrl && !cfg?.tokenUrl) return null;
-    const response = await proxyAwareFetch(cfg.refreshUrl || cfg.tokenUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Accept": "application/json",
-        "X-Nous-Refresh-Token": refreshToken
-      },
-      body: new URLSearchParams({ grant_type: "refresh_token", client_id: cfg.clientId })
-    }, proxyOptions);
-    if (!response.ok) return null;
-    const tokens = await response.json();
-    return { accessToken: tokens.access_token, refreshToken: tokens.refresh_token || refreshToken, expiresIn: tokens.expires_in };
   }
 
   // CLIProxyAPI DeviceFlowClient.RefreshToken — form body + X-Msh-* headers + stable device_id

@@ -150,21 +150,22 @@ async function calculateCost(provider, model, tokens) {
 }
 
 export function trackPendingRequest(model, provider, connectionId, started, error = false) {
+  const activeConnectionId = connectionId || "no-auth";
   const modelKey = provider ? `${model} (${provider})` : model;
-  const timerKey = `${connectionId}|${modelKey}`;
+  const timerKey = `${activeConnectionId}|${modelKey}`;
 
   if (!pendingRequests.byModel[modelKey]) pendingRequests.byModel[modelKey] = 0;
   pendingRequests.byModel[modelKey] = Math.max(0, pendingRequests.byModel[modelKey] + (started ? 1 : -1));
   if (pendingRequests.byModel[modelKey] === 0) delete pendingRequests.byModel[modelKey];
 
-  if (connectionId) {
-    if (!pendingRequests.byAccount[connectionId]) pendingRequests.byAccount[connectionId] = {};
-    if (!pendingRequests.byAccount[connectionId][modelKey]) pendingRequests.byAccount[connectionId][modelKey] = 0;
-    pendingRequests.byAccount[connectionId][modelKey] = Math.max(0, pendingRequests.byAccount[connectionId][modelKey] + (started ? 1 : -1));
-    if (pendingRequests.byAccount[connectionId][modelKey] === 0) {
-      delete pendingRequests.byAccount[connectionId][modelKey];
-      if (Object.keys(pendingRequests.byAccount[connectionId]).length === 0) {
-        delete pendingRequests.byAccount[connectionId];
+  if (activeConnectionId) {
+    if (!pendingRequests.byAccount[activeConnectionId]) pendingRequests.byAccount[activeConnectionId] = {};
+    if (!pendingRequests.byAccount[activeConnectionId][modelKey]) pendingRequests.byAccount[activeConnectionId][modelKey] = 0;
+    pendingRequests.byAccount[activeConnectionId][modelKey] = Math.max(0, pendingRequests.byAccount[activeConnectionId][modelKey] + (started ? 1 : -1));
+    if (pendingRequests.byAccount[activeConnectionId][modelKey] === 0) {
+      delete pendingRequests.byAccount[activeConnectionId][modelKey];
+      if (Object.keys(pendingRequests.byAccount[activeConnectionId]).length === 0) {
+        delete pendingRequests.byAccount[activeConnectionId];
       }
     }
   }
@@ -174,8 +175,8 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
     pendingTimers[timerKey] = setTimeout(() => {
       delete pendingTimers[timerKey];
       if (pendingRequests.byModel[modelKey] > 0) pendingRequests.byModel[modelKey] = 0;
-      if (connectionId && pendingRequests.byAccount[connectionId]?.[modelKey] > 0) {
-        pendingRequests.byAccount[connectionId][modelKey] = 0;
+      if (activeConnectionId && pendingRequests.byAccount[activeConnectionId]?.[modelKey] > 0) {
+        pendingRequests.byAccount[activeConnectionId][modelKey] = 0;
       }
       scheduleStatsEvent("pending");
     }, PENDING_TIMEOUT_MS);
@@ -189,7 +190,8 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
     lastErrorProvider.ts = Date.now();
   }
 
-  // [PENDING] console line removed; lifecycle is visible via "▶" and "📊 done" lines
+  const t = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  console.log(`[${t}] [PENDING] ${started ? "START" : "END"}${error ? " (ERROR)" : ""} | provider=${provider} | model=${model}`);
   scheduleStatsEvent("pending");
 }
 
@@ -200,7 +202,7 @@ export async function getActiveRequests() {
   for (const [connectionId, models] of Object.entries(pendingRequests.byAccount)) {
     for (const [modelKey, count] of Object.entries(models)) {
       if (count > 0) {
-        const accountName = connectionMap[connectionId] || `Account ${connectionId.slice(0, 8)}...`;
+        const accountName = connectionId === "no-auth" ? "Free / No Auth" : (connectionMap[connectionId] || `Account ${connectionId.slice(0, 8)}...`);
         const match = modelKey.match(/^(.*) \((.*)\)$/);
         activeRequests.push({
           model: match ? match[1] : modelKey,
@@ -301,18 +303,6 @@ export async function saveRequestUsage(entry) {
       const cur = db.get(`SELECT value FROM _meta WHERE key = 'totalRequestsLifetime'`);
       const next = (cur ? parseInt(cur.value, 10) : 0) + 1;
       db.run(`INSERT INTO _meta(key, value) VALUES('totalRequestsLifetime', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [String(next)]);
-
-      // Update API Key usedTokens and sliding window
-      if (entry.apiKey) {
-         const totalTokens = promptTokens + completionTokens;
-         if (totalTokens > 0) {
-            db.run(`UPDATE apiKeys SET usedTokens = COALESCE(usedTokens, 0) + ? WHERE key = ?`, [totalTokens, entry.apiKey]);
-         }
-         import("./apiKeysRepo.js").then(({ recordApiKeyUsageInWindow }) => {
-           recordApiKeyUsageInWindow(entry.apiKey, totalTokens);
-         }).catch(() => {});
-      }
-
       inserted = true;
     });
 
@@ -721,11 +711,6 @@ export async function getChartData(period = "7d") {
     return buckets;
   }
 
-  // All-time is bucketed by month rather than by day: an unbounded daily series
-  // would squeeze months of history into unreadable slivers on the axis. Checked
-  // before bucketCount so the daily path never computes a width it won't use.
-  if (period === "all") return getAllTimeChartData(db);
-
   const bucketCount = period === "7d" ? 7 : period === "30d" ? 30 : 60;
   const today = new Date();
   const labelFn = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -746,35 +731,6 @@ export async function getChartData(period = "7d") {
       cost: dayData ? (dayData.cost || 0) : 0,
     };
   });
-}
-
-function getAllTimeChartData(adapter) {
-  const dayRows = loadDaysInRange(adapter, null);
-  if (!dayRows.length) return [];
-
-  const monthMap = {};
-  for (const row of dayRows) {
-    const day = parseJson(row.data, {});
-    const monthKey = row.dateKey.slice(0, 7);
-    if (!monthMap[monthKey]) monthMap[monthKey] = { tokens: 0, cost: 0 };
-    monthMap[monthKey].tokens += (day.promptTokens || 0) + (day.completionTokens || 0);
-    monthMap[monthKey].cost += day.cost || 0;
-  }
-
-  const monthKeys = Object.keys(monthMap).sort();
-  const [firstYear, firstMonth] = monthKeys[0].split("-").map(Number);
-  const now = new Date();
-  const labelFn = (year, monthIndex) => new Date(year, monthIndex, 1).toLocaleDateString("en-US", { month: "short", year: "numeric" });
-  const result = [];
-  const cursor = new Date(firstYear, firstMonth - 1, 1);
-  const end = new Date(now.getFullYear(), now.getMonth(), 1);
-  while (cursor <= end) {
-    const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`;
-    const bucket = monthMap[key] || { tokens: 0, cost: 0 };
-    result.push({ label: labelFn(cursor.getFullYear(), cursor.getMonth()), tokens: bucket.tokens, cost: bucket.cost });
-    cursor.setMonth(cursor.getMonth() + 1);
-  }
-  return result;
 }
 
 function formatLogDate(date = new Date()) {

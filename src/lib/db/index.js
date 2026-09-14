@@ -1,20 +1,18 @@
 // Public API barrel — all DB functions
 import { getAdapter } from "./driver.js";
 import { stringifyJson, parseJson } from "./helpers/jsonCol.js";
-import {
-  apiKeyRowToExport, normalizeApiKeyForImport,
-  buildApiKeyInsertSql, apiKeyInsertValues,
-} from "./repos/apiKeysRepo.js";
 
 // Settings
 export {
   getSettings, updateSettings, isCloudEnabled, getCloudUrl, exportSettings,
+  bumpSettingsRevision, invalidateSettingsCache,
 } from "./repos/settingsRepo.js";
 
 // Provider connections
 export {
   getProviderConnections, getProviderConnectionById,
   createProviderConnection, updateProviderConnection,
+  createProviderConnectionsBulk,
   deleteProviderConnection, deleteProviderConnectionsByProvider,
   reorderProviderConnections, cleanupProviderConnections,
 } from "./repos/connectionsRepo.js";
@@ -31,9 +29,16 @@ export {
   createProxyPool, updateProxyPool, deleteProxyPool,
 } from "./repos/proxyPoolsRepo.js";
 
+// Proxy-pool fitness
+export {
+  listProxyPoolFitness, upsertProxyPoolFitness,
+  deleteProxyPoolFitness, clearProxyPoolFitness,
+  deleteProxyPoolFitnessByPool,
+} from "./repos/proxyPoolFitnessRepo.js";
+
 // API keys
 export {
-  getApiKeys, getApiKeyById, createApiKey, updateApiKey, deleteApiKey, validateApiKey, recordApiKeyUsageInWindow,
+  getApiKeys, getApiKeyById, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
 } from "./repos/apiKeysRepo.js";
 
 // Combos
@@ -45,7 +50,7 @@ export {
 // Aliases (model + custom + mitm)
 export {
   getModelAliases, setModelAlias, deleteModelAlias,
-  getCustomModels, addCustomModel, deleteCustomModel,
+  getCustomModels, addCustomModel, addCustomModelsBulk, deleteCustomModel,
   getMitmAlias, setMitmAliasAll,
 } from "./repos/aliasRepo.js";
 
@@ -59,6 +64,11 @@ export {
   getDisabledModels, getDisabledByProvider, disableModels, enableModels,
 } from "./repos/disabledModelsRepo.js";
 
+// Cached provider models
+export {
+  getCachedProviderModels, saveCachedProviderModels, clearCachedProviderModels,
+} from "./repos/cachedModelsRepo.js";
+
 // Usage
 export {
   statsEmitter, trackPendingRequest, getActiveRequests,
@@ -71,11 +81,6 @@ export {
   saveRequestDetail, getRequestDetails, getRequestDetailById, getDistinctProviders,
 } from "./repos/requestDetailsRepo.js";
 
-// Error logs
-export {
-  saveErrorLog, getErrorLogs, getErrorLogById, getDistinctErrorProviders,
-} from "./repos/errorLogsRepo.js";
-
 // Export/import full DB
 export async function exportDb() {
   const db = await getAdapter();
@@ -86,8 +91,9 @@ export async function exportDb() {
     providerConnections: db.all(`SELECT * FROM providerConnections`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, provider: r.provider, authType: r.authType, name: r.name, email: r.email, priority: r.priority, isActive: r.isActive === 1, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, type: r.type, name: r.name, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
-    apiKeys: db.all(`SELECT * FROM apiKeys`).map(apiKeyRowToExport),
-    combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
+    proxyPoolFitness: db.all(`SELECT * FROM proxyPoolFitness ORDER BY poolId, scope`),
+    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt })),
+    combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), context_length: r.context_length ?? null, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     modelAliases: {},
     customModels: [],
     mitmAlias: {},
@@ -107,6 +113,7 @@ export async function importDb(payload) {
     throw new Error("Invalid database payload");
   }
   const db = await getAdapter();
+  const { bumpSettingsRevision, invalidateSettingsCache } = await import("./repos/settingsRepo.js");
 
   db.transaction(() => {
     // Wipe all tables (keep _meta)
@@ -114,6 +121,7 @@ export async function importDb(payload) {
     db.run(`DELETE FROM providerConnections`);
     db.run(`DELETE FROM providerNodes`);
     db.run(`DELETE FROM proxyPools`);
+    db.run(`DELETE FROM proxyPoolFitness`);
     db.run(`DELETE FROM apiKeys`);
     db.run(`DELETE FROM combos`);
     db.run(`DELETE FROM kv WHERE scope IN ('modelAliases', 'customModels', 'mitmAlias', 'pricing')`);
@@ -144,16 +152,22 @@ export async function importDb(payload) {
         [id, isActive === false ? 0 : 1, testStatus || "unknown", stringifyJson(rest), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
       );
     }
+    for (const f of payload.proxyPoolFitness || []) {
+      db.run(
+        `INSERT OR REPLACE INTO proxyPoolFitness(poolId, scope, until, reason, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
+        [f.poolId, f.scope, f.until, f.reason || "", f.createdAt || new Date().toISOString(), f.updatedAt || new Date().toISOString()]
+      );
+    }
     for (const k of payload.apiKeys || []) {
-      // Derived from API_KEY_COLUMNS so the column list, the placeholders, and
-      // the values can never drift apart — the previous hand-written pair lost
-      // 8 columns on the way back in (limits, usage, rate caps, whitelist).
-      db.run(buildApiKeyInsertSql(), apiKeyInsertValues(normalizeApiKeyForImport(k)));
+      db.run(
+        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
+        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString()]
+      );
     }
     for (const c of payload.combos || []) {
       db.run(
-        `INSERT OR REPLACE INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
-        [c.id, c.name, c.kind || null, stringifyJson(c.models || []), c.createdAt || new Date().toISOString(), c.updatedAt || new Date().toISOString()]
+        `INSERT OR REPLACE INTO combos(id, name, kind, models, context_length, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+        [c.id, c.name, c.kind || null, stringifyJson(c.models || []), c.context_length ?? null, c.createdAt || new Date().toISOString(), c.updatedAt || new Date().toISOString()]
       );
     }
     for (const [a, m] of Object.entries(payload.modelAliases || {})) {
@@ -169,8 +183,10 @@ export async function importDb(payload) {
     for (const [provider, models] of Object.entries(payload.pricing || {})) {
       db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('pricing', ?, ?)`, [provider, stringifyJson(models || {})]);
     }
+    bumpSettingsRevision(db);
   });
 
+  invalidateSettingsCache();
   return await exportDb();
 }
 

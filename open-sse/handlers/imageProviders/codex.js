@@ -2,21 +2,13 @@
 import { randomUUID } from "node:crypto";
 import { nowSec } from "./_base.js";
 import { PROVIDERS } from "../../config/providers.js";
-import { CODEX_CLI_VERSION } from "../../config/appConstants.js";
 
 const CODEX_RESPONSES_URL = PROVIDERS["codex"].baseUrl;
-const CODEX_USER_AGENT = `codex_cli_rs/${CODEX_CLI_VERSION}`;
+const CODEX_USER_AGENT = "codex_cli_rs/0.136.0";
+const CODEX_VERSION = "0.136.0";
 const CODEX_ORIGINATOR = "codex_cli_rs";
 const CODEX_MODEL_SUFFIX = "-image";
 const CODEX_REF_DETAIL = "high";
-const CODEX_IMAGES_MAIN_MODEL = "gpt-5.5";
-const CODEX_TOOL_IMAGE_MODELS = new Set([
-  "gpt-image-1.5",
-  "gpt-image-2",
-  "gpt-image-2.5",
-  "gpt-image-2.5-flare",
-  "gpt-image-2.5-sunburst",
-]);
 
 function decodeAccountId(idToken) {
   try {
@@ -33,13 +25,6 @@ function decodeAccountId(idToken) {
 
 function stripImageSuffix(model) {
   return model.endsWith(CODEX_MODEL_SUFFIX) ? model.slice(0, -CODEX_MODEL_SUFFIX.length) : model;
-}
-
-function resolveCodexImageModels(model) {
-  if (CODEX_TOOL_IMAGE_MODELS.has(model)) {
-    return { responsesModel: CODEX_IMAGES_MAIN_MODEL, toolModel: model };
-  }
-  return { responsesModel: stripImageSuffix(model), toolModel: null };
 }
 
 function toDataUrl(input) {
@@ -172,7 +157,7 @@ export default {
       "originator": CODEX_ORIGINATOR,
       "session_id": randomUUID(),
       "user-agent": CODEX_USER_AGENT,
-      "version": CODEX_CLI_VERSION,
+      "version": CODEX_VERSION,
       "x-client-request-id": randomUUID(),
     };
   },
@@ -182,26 +167,21 @@ export default {
     const single = toDataUrl(body.image);
     if (single) refs.push(single);
     const detail = body.image_detail || CODEX_REF_DETAIL;
-    const { responsesModel, toolModel } = resolveCodexImageModels(model);
     const imgTool = { type: "image_generation", output_format: (body.output_format || "png").toLowerCase() };
-    if (toolModel) {
-      imgTool.action = refs.length > 0 ? "edit" : "generate";
-      imgTool.model = toolModel;
-    }
     if (body.size && body.size !== "") imgTool.size = body.size;
     if (body.quality && body.quality !== "") imgTool.quality = body.quality;
     if (body.background && body.background !== "") imgTool.background = body.background;
     return {
-      model: responsesModel,
+      model: stripImageSuffix(model),
       instructions: "",
       input: [{ type: "message", role: "user", content: buildContent(body.prompt, refs, detail) }],
       tools: [imgTool],
-      tool_choice: toolModel ? { type: "image_generation" } : "auto",
+      tool_choice: "auto",
       parallel_tool_calls: false,
       prompt_cache_key: randomUUID(),
       stream: true,
       store: false,
-      reasoning: toolModel ? { effort: "medium", summary: "auto" } : null,
+      reasoning: null,
     };
   },
   // Custom: codex parses SSE → either pipe to client or collect b64

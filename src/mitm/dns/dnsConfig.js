@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { log, err } = require("../logger");
-const { TOOL_HOSTS } = require("../../shared/constants/mitmToolHosts.js");
+const { TOOL_HOSTS } = require("../../shared/constants/mitmToolHosts.cjs");
 const { runElevatedPowerShell, isAdmin } = require("../winElevated.js");
 
 /**
@@ -218,13 +218,13 @@ async function removeDNSEntry(tool, sudoPassword) {
  * Remove ALL tool DNS entries (used when stopping server)
  */
 async function removeAllDNSEntries(sudoPassword) {
-  for (const tool of Object.keys(TOOL_HOSTS)) {
+  await Promise.all(Object.keys(TOOL_HOSTS).map(async (tool) => {
     try {
       await removeDNSEntry(tool, sudoPassword);
     } catch (e) {
       err(`DNS ${tool}: failed to remove — ${e.message}`);
     }
-  }
+  }));
 }
 
 /**

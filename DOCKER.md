@@ -1,6 +1,10 @@
 # Docker
 
-Run 9Router in a container. Published image: [`decolua/9router`](https://hub.docker.com/r/decolua/9router) — multi-platform `linux/amd64` + `linux/arm64`.
+Run VansRouter in a container. Published images:
+- GHCR: [`ghcr.io/vanszs/vansrouter`](https://github.com/Vanszs/VansRouter/pkgs/container/VansRouter)
+- Docker Hub: [`vanszs/vansrouter`](https://hub.docker.com/r/vanszs/vansrouter)
+
+Multi-platform `linux/amd64` + `linux/arm64`.
 
 ---
 
@@ -13,8 +17,8 @@ docker run -d \
   -p 20128:20128 \
   -v "$HOME/.9router:/app/data" \
   -e DATA_DIR=/app/data \
-  --name 9router \
-  decolua/9router:latest
+  --name vansrouter \
+  ghcr.io/vanszs/vansrouter:latest
 ```
 
 App listens on port `20128`. Open: http://localhost:20128
@@ -22,10 +26,10 @@ App listens on port `20128`. Open: http://localhost:20128
 ## Manage container
 
 ```bash
-docker logs -f 9router        # view logs
-docker stop 9router           # stop
-docker start 9router          # start again
-docker rm -f 9router          # remove
+docker logs -f vansrouter        # view logs
+docker stop vansrouter           # stop
+docker start vansrouter          # start again
+docker rm -f vansrouter          # remove
 ```
 
 ## Data persistence
@@ -50,6 +54,12 @@ $DATA_DIR/
 Host path: `$HOME/.9router/db/data.sqlite`
 Container path: `/app/data/db/data.sqlite`
 
+Production requirements:
+- Run one VansRouter process per SQLite file. Multiple containers/processes with separate local volumes do not share proxy-pool fitness state.
+- If scaling horizontally, provide a shared database/backend for routing state before enabling multiple app instances.
+- Keep the persistent volume name `vansrouter-data`; renaming it creates a new empty database volume.
+- Production requires a native SQLite driver. The `sql.js` fallback is single-process development fallback only.
+
 ## Optional env vars
 
 ```bash
@@ -60,33 +70,67 @@ docker run -d \
   -e PORT=20128 \
   -e HOSTNAME=0.0.0.0 \
   -e DEBUG=true \
-  --name 9router \
-  decolua/9router:latest
+  --name vansrouter \
+  ghcr.io/vanszs/vansrouter:latest
 ```
 
 ## Optional Headroom sidecar
 
-The 9Router image does not bundle Python or Headroom. To use Headroom in Docker, run it as a separate service and point 9Router at that proxy:
+Headroom is an optional sidecar service for tool-history safety and advanced request processing.
+
+### Option A: Docker Compose (Recommended)
+
+Use the provided `docker-compose.yml`:
+
+```bash
+# Copy and customize environment
+cp .env.example .env
+nano .env
+
+# Start both services
+docker compose up -d
+```
+
+### Option B: Manual Compose
+
+Create your own `docker-compose.yml`:
 
 ```yaml
 services:
-  9router:
-    image: decolua/9router:latest
+  vansrouter:
+    image: ghcr.io/vanszs/vansrouter:latest
+    container_name: vansrouter
+    restart: always
     ports:
       - "20128:20128"
     volumes:
-      - "$HOME/.9router:/app/data"
+      - vansrouter-data:/app/data
+    env_file:
+      - .env
     environment:
       DATA_DIR: /app/data
+      PORT: "20128"
+      HOSTNAME: "0.0.0.0"
+      NODE_ENV: production
       HEADROOM_URL: http://headroom:8787
     depends_on:
       - headroom
 
   headroom:
     image: ghcr.io/chopratejas/headroom:latest
+    container_name: headroom
+    restart: always
     ports:
       - "8787:8787"
+
+volumes:
+  vansrouter-data:
+    name: vansrouter-data
 ```
+
+### Option C: Separate Containers
+
+Run Headroom independently:
 
 In the dashboard, open `Endpoint` → `Token Saver` → `Headroom`, confirm the URL is `http://headroom:8787`, recheck status, then enable Headroom.
 
@@ -95,8 +139,8 @@ If Headroom runs on the Docker host instead of as a sidecar, use `http://host.do
 ## Update to latest
 
 ```bash
-docker pull decolua/9router:latest
-docker rm -f 9router
+docker pull ghcr.io/vanszs/vansrouter:latest
+docker rm -f vansrouter
 # re-run the quick start command
 ```
 
@@ -107,26 +151,26 @@ docker rm -f 9router
 ## Build image locally (test)
 
 ```bash
-cd app && docker build -t 9router .
+docker build -t vansrouter .
 
 docker run --rm -p 20128:20128 \
   -v "$HOME/.9router:/app/data" \
   -e DATA_DIR=/app/data \
-  9router
+  vansrouter
 ```
 
 ## Publish (automatic via CI)
 
 Push a git tag `v*` → GitHub Actions builds multi-platform (amd64+arm64) and pushes to:
-- `ghcr.io/decolua/9router:v{version}` + `:latest`
-- `decolua/9router:v{version}` + `:latest`
+- `ghcr.io/vanszs/vansrouter:v{version}` + `:latest`
+- `vanszs/vansrouter:v{version}` + `:latest`
 
 ```bash
 # Use scripts/release.js (recommended)
 node scripts/release.js "Release title" "Notes"
 
 # Or manually
-git tag v0.4.x && git push origin v0.4.x
+git tag v0.7.x && git push origin v0.7.x
 ```
 
-Workflow: `app/.github/workflows/docker-publish.yml`
+Workflow: `.github/workflows/release.yml`

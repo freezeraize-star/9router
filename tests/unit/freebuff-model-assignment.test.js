@@ -3,7 +3,7 @@ import { filterConnectionsForModel } from "../../src/sse/services/auth.js";
 
 const connections = [
   { id: "flash-1", providerSpecificData: { freebuffModel: "deepseek/deepseek-v4-flash" } },
-  { id: "mimo-1", providerSpecificData: { freebuffModel: "mimo/mimo-v2.5" } },
+  { id: "mimo-1", providerSpecificData: { assignedModel: "mimo/mimo-v2.5" } },
   { id: "unassigned", providerSpecificData: {} },
 ];
 
@@ -16,7 +16,7 @@ describe("Freebuff strict model assignment", () => {
     expect(result.map((connection) => connection.id)).toEqual(["mimo-1"]);
   });
 
-  it("excludes unassigned accounts when strict mode is enabled", () => {
+  it("excludes unassigned accounts in strict mode", () => {
     const result = filterConnectionsForModel("freebuff", connections, "deepseek/deepseek-v4-flash", {
       providerStrategies: { freebuff: { strictModelAssignment: true } },
     });
@@ -24,13 +24,22 @@ describe("Freebuff strict model assignment", () => {
     expect(result.map((connection) => connection.id)).toEqual(["flash-1"]);
   });
 
-  it("preserves the existing pool when strict mode is disabled", () => {
+  it("preserves existing selection when strict mode is disabled", () => {
     expect(filterConnectionsForModel("freebuff", connections, "mimo/mimo-v2.5", {})).toBe(connections);
   });
 
-  it("does not affect other providers when their toggle is off", () => {
+  it("does not affect other providers even with a stray flag", () => {
     expect(filterConnectionsForModel("codex", connections, "mimo/mimo-v2.5", {
-      providerStrategies: {},
+      providerStrategies: { codex: { strictModelAssignment: true } },
     })).toBe(connections);
+  });
+
+  it("lets an explicit empty assignment clear a legacy assignment", () => {
+    const result = filterConnectionsForModel("freebuff", [
+      { id: "legacy", providerSpecificData: { assignedModel: null, freebuffModel: "mimo/mimo-v2.5" } },
+    ], "mimo/mimo-v2.5", {
+      providerStrategies: { freebuff: { strictModelAssignment: true } },
+    });
+    expect(result).toEqual([]);
   });
 });

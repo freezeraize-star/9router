@@ -25,7 +25,7 @@ const LIMIT_TOLERANCE = 0.1;
 // 9router provider id -> models.dev provider id, for context/maxOutput only.
 // Providers absent here keep whatever the local pattern table resolves; names
 // that already match are resolved automatically.
-export const PROVIDER_ALIASES = {
+const PROVIDER_ALIASES = {
   "glm": "zai",
   "glm-cn": "zhipuai",
   "claude": "anthropic",
@@ -78,7 +78,7 @@ function slim(catalog) {
   return out;
 }
 
-export function build(catalog, entries) {
+function build(catalog, entries) {
   // Index once: per provider for limits, and tallied across all of them for
   // modalities.
   const byProvider = {};
@@ -114,9 +114,8 @@ export function build(catalog, entries) {
     if (Object.keys(declared).length) models[id] = declared;
   }
 
-  // Providers explicitly aliased to a canonical models.dev catalog (for
-  // example a custom OpenAI-compatible gateway) may use that catalog's limits
-  // when the gateway has no separate provider entry.
+  // Limits belong to the gateway — each truncates differently — so only the
+  // matching provider's own numbers are used, keyed by provider + model.
   const providers = {};
   for (const { provider, model, contextLength, current } of entries) {
     const alias = PROVIDER_ALIASES[provider];

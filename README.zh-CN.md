@@ -82,7 +82,7 @@ npm install -g 9router
 
 **2. 连接免费提供商（无需注册）：**
 
-控制面板 → 提供商 → 连接 **Kiro AI**（约 50 积分/月免费：Claude 4.5 + GLM-5 + MiniMax）或 **OpenCode Free**（无需认证）→ 完成！
+控制面板 → 提供商 → 连接 **Kiro AI**（免费 Claude 无限量）或 **OpenCode Free**（无需认证）→ 完成！
 
 **3. 在 CLI 工具中使用：**
 
@@ -97,7 +97,7 @@ Claude Code/Codex/OpenClaw/Cursor/Cline 设置：
 
 **替代方案：从源码运行（本仓库）：**
 
-本仓库的包是私有的（`9router-app`），所以源码/Docker 执行是预期的本地开发方式。
+本仓库的包是私有的（`vansrouter-app`），所以源码/Docker 执行是预期的本地开发方式。
 
 ```bash
 cp .env.example .env
@@ -185,53 +185,53 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
   <table>
     <tr>
       <td align="center" width="120">
-        <img src="./public/providers/claude.png" width="60" alt="Claude Code"/><br/>
+        <img src="./public/providers/claude.webp" width="60" alt="Claude Code"/><br/>
         <b>Claude-Code</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/openclaw.png" width="60" alt="OpenClaw"/><br/>
+        <img src="./public/providers/openclaw.webp" width="60" alt="OpenClaw"/><br/>
         <b>OpenClaw</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/codex.png" width="60" alt="Codex"/><br/>
+        <img src="./public/providers/codex.webp" width="60" alt="Codex"/><br/>
         <b>Codex</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/opencode.png" width="60" alt="OpenCode"/><br/>
+        <img src="./public/providers/opencode.webp" width="60" alt="OpenCode"/><br/>
         <b>OpenCode</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/cursor.png" width="60" alt="Cursor"/><br/>
+        <img src="./public/providers/cursor.webp" width="60" alt="Cursor"/><br/>
         <b>Cursor</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/antigravity.png" width="60" alt="Antigravity"/><br/>
+        <img src="./public/providers/antigravity.webp" width="60" alt="Antigravity"/><br/>
         <b>Antigravity</b>
       </td>
     </tr>
     <tr>
       <td align="center" width="120">
-        <img src="./public/providers/cline.png" width="60" alt="Cline"/><br/>
+        <img src="./public/providers/cline.webp" width="60" alt="Cline"/><br/>
         <b>Cline</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/continue.png" width="60" alt="Continue"/><br/>
+        <img src="./public/providers/continue.webp" width="60" alt="Continue"/><br/>
         <b>Continue</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/droid.png" width="60" alt="Droid"/><br/>
+        <img src="./public/providers/droid.webp" width="60" alt="Droid"/><br/>
         <b>Droid</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/roo.png" width="60" alt="Roo"/><br/>
+        <img src="./public/providers/roo.webp" width="60" alt="Roo"/><br/>
         <b>Roo</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/copilot.png" width="60" alt="Copilot"/><br/>
+        <img src="./public/providers/copilot.webp" width="60" alt="Copilot"/><br/>
         <b>Copilot</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/kilocode.png" width="60" alt="Kilo Code"/><br/>
+        <img src="./public/providers/kilocode.webp" width="60" alt="Kilo Code"/><br/>
         <b>Kilo Code</b>
       </td>
     </tr>
@@ -248,23 +248,23 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
   <table>
     <tr>
       <td align="center" width="120">
-        <img src="./public/providers/claude.png" width="60" alt="Claude Code"/><br/>
+        <img src="./public/providers/claude.webp" width="60" alt="Claude Code"/><br/>
         <b>Claude-Code</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/antigravity.png" width="60" alt="Antigravity"/><br/>
+        <img src="./public/providers/antigravity.webp" width="60" alt="Antigravity"/><br/>
         <b>Antigravity</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/codex.png" width="60" alt="Codex"/><br/>
+        <img src="./public/providers/codex.webp" width="60" alt="Codex"/><br/>
         <b>Codex</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/github.png" width="60" alt="GitHub"/><br/>
+        <img src="./public/providers/github.webp" width="60" alt="GitHub"/><br/>
         <b>GitHub</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/cursor.png" width="60" alt="Cursor"/><br/>
+        <img src="./public/providers/cursor.webp" width="60" alt="Cursor"/><br/>
         <b>Cursor</b>
       </td>
     </tr>
@@ -277,17 +277,17 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
   <table>
     <tr>
       <td align="center" width="150">
-        <img src="./public/providers/kiro.png" width="70" alt="Kiro"/><br/>
+        <img src="./public/providers/kiro.webp" width="70" alt="Kiro"/><br/>
         <b>Kiro AI</b><br/>
-        <sub>Claude 4.5 + GLM-5 + MiniMax<br/>每月 50 积分免费</sub>
+        <sub>Claude 4.5 + GLM-5 + MiniMax<br/>无限免费</sub>
       </td>
       <td align="center" width="150">
-        <img src="./public/providers/opencode.png" width="70" alt="OpenCode Free"/><br/>
+        <img src="./public/providers/opencode.webp" width="70" alt="OpenCode Free"/><br/>
         <b>OpenCode Free</b><br/>
-        <sub>无需认证 • 自动获取模型<br/>免费（模型列表会变）</sub>
+        <sub>无需认证 • 自动获取模型<br/>无限免费</sub>
       </td>
       <td align="center" width="150">
-        <img src="./public/providers/gemini.png" width="70" alt="Vertex AI"/><br/>
+        <img src="./public/providers/gemini.webp" width="70" alt="Vertex AI"/><br/>
         <b>Vertex AI</b><br/>
         <sub>Gemini 3 Pro + GLM-5 + DeepSeek<br/>$300 免费额度</sub>
       </td>
@@ -295,11 +295,7 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
   </table>
 </div>
 
-> **注意：** iFlow、Qwen Code 和 Gemini CLI 的免费等级已于 2026 年停止。请改用 Kiro / OpenCode Free / Vertex。
->
-> **Kiro AI** 于 2025 年 9 月转为付费模式 — 免费等级现在上限为**每月 50 积分**（新账户前 30 天另加 500 试用积分）。付费档位：Pro $20/月（1,000 积分）、Pro+ $40/月（2,000）、Pro Max $100/月（5,000）、Power $200/月（10,000）。
-> **OpenCode Free** 的模型列表会随时间变化（部分模型仅限时免费）— 可能随时变更，恕不另行通知。
-> **Vertex AI**：新 GCP 账户的 $300 免费额度仍然有效，但自 2026 年 3 月起 **Gemini API 端点不再消耗这些额度** — 请改用 **Vertex AI Studio** 端点。
+> **注意：** iFlow、Qwen 和 Gemini CLI 的免费等级已于 2026 年停止。请改用 Kiro / OpenCode Free / Vertex。
 
 ### 🔑 API Key 提供商（40+）
 
@@ -307,79 +303,79 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
   <table>
     <tr>
       <td align="center" width="100">
-        <img src="./public/providers/openrouter.png" width="50" alt="OpenRouter"/><br/>
+        <img src="./public/providers/openrouter.webp" width="50" alt="OpenRouter"/><br/>
         <sub>OpenRouter</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/glm.png" width="50" alt="GLM"/><br/>
+        <img src="./public/providers/glm.webp" width="50" alt="GLM"/><br/>
         <sub>GLM</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/kimi.png" width="50" alt="Kimi"/><br/>
+        <img src="./public/providers/kimi.webp" width="50" alt="Kimi"/><br/>
         <sub>Kimi</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/minimax.png" width="50" alt="MiniMax"/><br/>
+        <img src="./public/providers/minimax.webp" width="50" alt="MiniMax"/><br/>
         <sub>MiniMax</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/openai.png" width="50" alt="OpenAI"/><br/>
+        <img src="./public/providers/openai.webp" width="50" alt="OpenAI"/><br/>
         <sub>OpenAI</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/anthropic.png" width="50" alt="Anthropic"/><br/>
+        <img src="./public/providers/anthropic.webp" width="50" alt="Anthropic"/><br/>
         <sub>Anthropic</sub>
       </td>
     </tr>
     <tr>
       <td align="center" width="100">
-        <img src="./public/providers/gemini.png" width="50" alt="Gemini"/><br/>
+        <img src="./public/providers/gemini.webp" width="50" alt="Gemini"/><br/>
         <sub>Gemini</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/deepseek.png" width="50" alt="DeepSeek"/><br/>
+        <img src="./public/providers/deepseek.webp" width="50" alt="DeepSeek"/><br/>
         <sub>DeepSeek</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/groq.png" width="50" alt="Groq"/><br/>
+        <img src="./public/providers/groq.webp" width="50" alt="Groq"/><br/>
         <sub>Groq</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/xai.png" width="50" alt="xAI"/><br/>
+        <img src="./public/providers/xai.webp" width="50" alt="xAI"/><br/>
         <sub>xAI</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/mistral.png" width="50" alt="Mistral"/><br/>
+        <img src="./public/providers/mistral.webp" width="50" alt="Mistral"/><br/>
         <sub>Mistral</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/perplexity.png" width="50" alt="Perplexity"/><br/>
+        <img src="./public/providers/perplexity.webp" width="50" alt="Perplexity"/><br/>
         <sub>Perplexity</sub>
       </td>
     </tr>
     <tr>
       <td align="center" width="100">
-        <img src="./public/providers/together.png" width="50" alt="Together"/><br/>
+        <img src="./public/providers/together.webp" width="50" alt="Together"/><br/>
         <sub>Together AI</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/fireworks.png" width="50" alt="Fireworks"/><br/>
+        <img src="./public/providers/fireworks.webp" width="50" alt="Fireworks"/><br/>
         <sub>Fireworks</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/cerebras.png" width="50" alt="Cerebras"/><br/>
+        <img src="./public/providers/cerebras.webp" width="50" alt="Cerebras"/><br/>
         <sub>Cerebras</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/cohere.png" width="50" alt="Cohere"/><br/>
+        <img src="./public/providers/cohere.webp" width="50" alt="Cohere"/><br/>
         <sub>Cohere</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/nvidia.png" width="50" alt="NVIDIA"/><br/>
+        <img src="./public/providers/nvidia.webp" width="50" alt="NVIDIA"/><br/>
         <sub>NVIDIA</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/siliconflow.png" width="50" alt="SiliconFlow"/><br/>
+        <img src="./public/providers/siliconflow.webp" width="50" alt="SiliconFlow"/><br/>
         <sub>SiliconFlow</sub>
       </td>
     </tr>
@@ -504,7 +500,7 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
 > 使用分析中显示的"成本"**仅用于追踪和比较目的**。
 > 9Router 本身**永远不会向你收费**。你只直接向提供商付款（如果使用付费服务）。
 > 
-> **示例：** 如果你的控制面板显示使用 Kiro 免费模型时"总成本 $290"，这代表你如果直接使用付费 API 需要支付的金额。你的实际成本 = **$0**（Kiro 免费等级：约 50 积分/月）。
+> **示例：** 如果你的控制面板显示使用 iFlow 模型时"总成本 $290"，这代表你如果直接使用付费 API 需要支付的金额。你的实际成本 = **$0**（iFlow 免费无限量）。
 > 
 > 把它想象成一个"节省追踪器"，展示你通过使用免费模型或通过 9Router 路由节省了多少钱！
 
@@ -531,9 +527,9 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
 | **💰 低价** | GLM-5.1 / GLM-4.7 | $0.6/1M | 每日 10AM | 预算备份 |
 | | MiniMax M2.7 | $0.2/1M | 5小时滚动 | 最便宜选项 |
 | | Kimi K2.5 | $9/月固定 | 10M tokens/月 | 可预测成本 |
- | **🆓 免费** | Kiro AI | $0 | 50 积分/月 | Claude 4.5 + GLM-5 + MiniMax 免费（之上为付费档位） |
- | | OpenCode Free | $0 |  varies* | 无需认证，自动获取模型（列表会变化） |
- | | Vertex AI | $300 额度 | 新 GCP 账户 | Gemini 3 Pro + DeepSeek + GLM-5（使用 Vertex AI Studio 端点消耗免费额度） |
+| **🆓 免费** | Kiro AI | $0 | 无限量 | Claude 4.5 + GLM-5 + MiniMax 免费 |
+| | OpenCode Free | $0 | 无限量 | 无需认证，自动获取模型 |
+| | Vertex AI | $300 额度 | 新 GCP 账户 | Gemini 3 Pro + DeepSeek + GLM-5 |
 
 **💡 专业提示：** RTK + Kiro AI + OpenCode Free 组合 = **$0 成本 + 节省 20-40% tokens**！
 
@@ -546,7 +542,7 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
 ✅ **9Router 软件 = 永久免费**（开源，绝不收费）  
 ✅ **控制面板"成本" = 仅用于显示/追踪**（不是实际账单）  
 ✅ **你直接向提供商付款**（订阅或 API 费用）  
-✅ **免费提供商保持免费**（Kiro 约 50 积分/月、OpenCode Free、Vertex $300 额度 = 在免费额度内 $0）— 注意 iFlow/Qwen/Gemini CLI 免费等级已于 2026 年停止
+✅ **免费提供商保持免费**（iFlow、Kiro、Qwen = $0 无限量）  
 ❌ **9Router 永不发送发票** 或扣款
 
 **成本显示如何工作：**
@@ -561,7 +557,7 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
 • 显示成本：$290
 
 实际检查：
-• 提供商：Kiro（免费等级：约 50 积分/月）
+• 提供商：iFlow（免费无限量）
 • 实际支付：$0.00
 • $290 意味着什么：通过使用免费模型节省的金额！
 ```
@@ -569,7 +565,7 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
 **付款规则：**
 - **订阅提供商**（Claude Code、Codex）：通过他们的网站直接付款
 - **低价提供商**（GLM、MiniMax）：直接付款，9Router 只做路由
-- **免费提供商**（Kiro、OpenCode Free、Vertex）：真正的免费，在免费额度内无隐藏费用
+- **免费提供商**（iFlow、Kiro、Qwen）：真正的永久免费，无隐藏费用
 - **9Router**：从不收取任何费用，永远不会
 
 ---
@@ -598,7 +594,7 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
 **解决方案：**
 ```
 组合："free-forever"
-  1. kr/claude-sonnet-4.5      （通过 Kiro 免费使用 Claude 4.5，约 50 积分/月）
+  1. kr/claude-sonnet-4.5      （Claude 4.5 免费无限量）
   2. kr/glm-5                  （通过 Kiro 免费使用 GLM-5）
   3. oc/<auto>                 （OpenCode Free，无需认证）
 
@@ -617,7 +613,7 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
   2. cx/gpt-5.5                （第二个订阅）
   3. glm/glm-5.1               （低价，每日重置）
   4. minimax/MiniMax-M2.7      （最便宜，5小时重置）
-  5. kr/claude-sonnet-4.5      （通过 Kiro 免费使用，约 50 积分/月）
+  5. kr/claude-sonnet-4.5      （免费无限量）
 
 结果：5 层切换 = 零停机时间
 月成本：$20-200（订阅）+ $10-20（备份）
@@ -649,7 +645,7 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
 
 **示例：**
 - **控制面板显示：** "$290 总成本"
-- **实际情况：** 你在使用 Kiro 免费模型（约 50 积分/月）
+- **实际情况：** 你在使用 iFlow（免费无限量）
 - **你的实际成本：** **$0.00**
 - **$290 的含义：** 你通过使用免费模型而不是付费 API **节省**的金额！
 
@@ -674,19 +670,19 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
 <details>
 <summary><b>🆓 免费提供商真的是无限量的吗？</b></summary>
 
-**基本上是！** 当前的免费提供商（Kiro、OpenCode Free、Vertex）是真正的免费，但免费等级有上限：
+**是的！** 当前的免费提供商（Kiro、OpenCode Free、Vertex）是真正的免费，**无隐藏费用**。
 
 这些是各公司提供的免费服务：
-- **Kiro AI**：通过 AWS Builder ID / Google / GitHub OAuth 使用，免费等级约**每月 50 积分**（新账户前 30 天另加 500 试用积分）。之上提供付费档位。
-- **OpenCode Free**：无认证直连代理，模型从 `opencode.ai/zen/v1/models` 自动获取。免费模型列表会随时间变化（部分模型仅限时免费）— 可能随时变更。
-- **Vertex AI**：新 Google Cloud 账户可获得 $300 免费额度（90 天）。自 2026 年 3 月起 Gemini API 端点不再消耗这些额度 — 请改用 **Vertex AI Studio** 端点。
+- **Kiro AI**：通过 AWS Builder ID / Google / GitHub OAuth 免费无限量使用 Claude 4.5 + GLM-5 + MiniMax
+- **OpenCode Free**：无认证直连代理，模型从 `opencode.ai/zen/v1/models` 自动获取
+- **Vertex AI**：新 Google Cloud 账户可获得 $300 免费额度（90 天）
 
 9Router 只是路由你的请求到它们 — 没有"陷阱"或未来的计费。它们是真正的免费服务，9Router 让它们易于使用并支持切换。
 
 **已停止的免费等级（不再推荐）：**
 - ❌ **iFlow**：曾是免费无限量，现在改为付费（2026）
-- ❌ **Qwen Code**：阿里巴巴于 2026-04-15 完全停止免费 OAuth 等级
-- ❌ **Gemini CLI**：Google 已于 2026-06-18 完全停止服务（由闭源的 Antigravity CLI 取代）。已停止 — 请勿使用。
+- ❌ **Qwen Code**：阿里巴巴于 2026-04-15 停止免费 OAuth 等级
+- ❌ **Gemini CLI**：仍可用，但与非 CLI 工具（Claude、Codex、Cursor...）一起使用可能会导致账户被封 — 仅在你坚持使用 Gemini CLI 本身时才使用
 
 </details>
 
@@ -697,11 +693,11 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
 
 1. **从 100% 免费组合开始：**
    ```
-   1. kr/glm-5 (通过 Kiro 免费使用 GLM-5，约 50 积分/月)
-   2. OpenCode Free 模型（无认证，自动获取）
-   3. Vertex AI Gemini 3 Pro（使用 Vertex AI Studio 端点 + $300 额度）
+   1. gc/gemini-3-flash (Google 每月 180K 免费)
+   2. if/kimi-k2-thinking (iFlow 无限量免费)
+   3. qw/qwen3-coder-plus (Qwen 无限量免费)
    ```
-   **成本：$0/月**（在 Kiro 免费积分上限内；OpenCode/Vertex 受各自免费等级限制）
+   **成本：$0/月**
 
 2. **仅在需要时添加低价备份：**
    ```
@@ -922,7 +918,7 @@ Vertex 合作伙伴（通过 Vertex 提供 Anthropic / DeepSeek / GLM / Qwen）�
 ```
 名称：free-combo
 模型：
-  1. kr/claude-sonnet-4.5 (通过 Kiro 免费使用 Claude 4.5，约 50 积分/月)
+  1. kr/claude-sonnet-4.5 (Claude 4.5 免费无限量)
   2. kr/glm-5 (通过 Kiro 免费使用 GLM-5)
   3. vertex/gemini-3.1-pro-preview ($300 免费额度)
 
@@ -1172,7 +1168,7 @@ docker stop 9router && docker rm 9router
 - `kimi/kimi-k2.5`
 - `kimi/kimi-k2.5-thinking`
 
-**Kiro（`kr/`）** - 免费（约 50 积分/月，之上为付费档位）：
+**Kiro（`kr/`）** - 免费无限量：
 - `kr/claude-sonnet-4.5`
 - `kr/claude-haiku-4.5`
 - `kr/glm-5`

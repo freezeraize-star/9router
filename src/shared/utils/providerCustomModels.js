@@ -29,7 +29,6 @@ export function getProviderCustomModelRows({
       fullModel,
       source: "custom",
       type: rowType,
-      ...(model.caps ? { caps: model.caps } : {}),
     });
   }
 

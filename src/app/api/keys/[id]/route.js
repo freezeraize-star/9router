@@ -21,7 +21,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive } = body;
+    const { isActive, allowedProviders, allowedCombos, allowedKinds, name } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -30,18 +30,22 @@ export async function PUT(request, { params }) {
 
     const updateData = {};
     if (isActive !== undefined) updateData.isActive = isActive;
-    if (body.name !== undefined) updateData.name = body.name;
-    if (body.tokenLimit !== undefined) updateData.tokenLimit = Number(body.tokenLimit);
-    if (body.resetInterval !== undefined) updateData.resetInterval = body.resetInterval;
-    if (body.usedTokens !== undefined) updateData.usedTokens = Number(body.usedTokens);
-    if (body.lastResetAt !== undefined) updateData.lastResetAt = body.lastResetAt;
-    if (body.allowedModels !== undefined) updateData.allowedModels = body.allowedModels;
-    if (body.rpmLimit !== undefined) updateData.rpmLimit = Number(body.rpmLimit);
-    if (body.tpmLimit !== undefined) updateData.tpmLimit = Number(body.tpmLimit);
-    if (body.ipWhitelist !== undefined) updateData.ipWhitelist = body.ipWhitelist;
+    // Name is optional on update; ignore blank/whitespace-only values.
+    if ("name" in body && typeof name === "string" && name.trim()) {
+      updateData.name = name.trim();
+    }
+    // null = all allowed, [] = none, [x] = specific. Only update if key present in body.
+    if ("allowedProviders" in body) {
+      updateData.allowedProviders = allowedProviders === null ? null : (Array.isArray(allowedProviders) ? allowedProviders : null);
+    }
+    if ("allowedCombos" in body) {
+      updateData.allowedCombos = allowedCombos === null ? null : (Array.isArray(allowedCombos) ? allowedCombos : null);
+    }
+    if ("allowedKinds" in body) {
+      updateData.allowedKinds = allowedKinds === null ? null : (Array.isArray(allowedKinds) ? allowedKinds : null);
+    }
 
     const updated = await updateApiKey(id, updateData);
-
     return NextResponse.json({ key: updated });
   } catch (error) {
     console.log("Error updating key:", error);

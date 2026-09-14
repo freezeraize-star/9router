@@ -59,28 +59,6 @@ describe("provider custom model rows", () => {
     ]);
   });
 
-  it("keeps stored caps on provider-owned dashboard rows", () => {
-    expect(getProviderCustomModelRows({
-      customModels: [{
-        providerAlias: "provider-a",
-        id: "shared-id",
-        type: "llm",
-        caps: { contextWindow: 123456, maxOutput: 7890 },
-      }],
-      providerAlias: "provider-a",
-    })[0].caps).toEqual({ contextWindow: 123456, maxOutput: 7890 });
-
-    expect(getProviderCustomModelRows({
-      customModels: [{
-        providerAlias: "provider-a",
-        id: "shared-id",
-        type: "llm",
-        caps: { contextWindow: 123456 },
-      }],
-      providerAlias: "provider-b",
-    })).toEqual([]);
-  });
-
   it("filters built-in models and typed custom models", () => {
     const rows = getProviderCustomModelRows({
       customModels: [
@@ -102,5 +80,25 @@ describe("provider custom model rows", () => {
         type: "llm",
       },
     ]);
+  });
+
+  it("adds custom models in bulk atomically", async () => {
+    const { addCustomModelsBulk, getCustomModels, deleteCustomModel } = await import("@/lib/db/index.js");
+    const testModels = [
+      { providerAlias: "test-bulk-prov", id: "bulk-m1", type: "llm" },
+      { providerAlias: "test-bulk-prov", id: "bulk-m2", type: "llm" },
+    ];
+    const count = await addCustomModelsBulk(testModels);
+    expect(count).toBe(2);
+
+    const all = await getCustomModels();
+    const found1 = all.find((m) => m.providerAlias === "test-bulk-prov" && m.id === "bulk-m1");
+    const found2 = all.find((m) => m.providerAlias === "test-bulk-prov" && m.id === "bulk-m2");
+    expect(found1).toBeDefined();
+    expect(found2).toBeDefined();
+
+    // Clean up
+    await deleteCustomModel({ providerAlias: "test-bulk-prov", id: "bulk-m1", type: "llm" });
+    await deleteCustomModel({ providerAlias: "test-bulk-prov", id: "bulk-m2", type: "llm" });
   });
 });

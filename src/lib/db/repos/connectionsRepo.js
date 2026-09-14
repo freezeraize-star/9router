@@ -1,4 +1,4 @@
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "node:crypto";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 
@@ -9,28 +9,6 @@ const OPTIONAL_FIELDS = [
   "lastTested", "lastError", "lastErrorAt", "rateLimitedUntil", "expiresIn", "errorCode",
   "consecutiveUseCount", "idToken", "lastRefreshAt",
 ];
-
-const MODEL_LOCK_PREFIX = "modelLock_";
-
-function resetHealthStateOnActivation(existing, patch) {
-  if (patch?.testStatus !== "active") return patch;
-
-  const normalized = {
-    ...patch,
-    testStatus: "active",
-    lastError: Object.hasOwn(patch, "lastError") ? patch.lastError : null,
-    lastErrorAt: Object.hasOwn(patch, "lastErrorAt") ? patch.lastErrorAt : null,
-    errorCode: null,
-    rateLimitedUntil: null,
-    backoffLevel: 0,
-  };
-
-  for (const key of Object.keys(existing || {})) {
-    if (key.startsWith(MODEL_LOCK_PREFIX)) normalized[key] = null;
-  }
-
-  return normalized;
-}
 
 function rowToConn(row) {
   if (!row) return null;
@@ -130,7 +108,13 @@ export async function createProviderConnection(data) {
     const all = db.all(`SELECT * FROM providerConnections WHERE provider = ?`, [data.provider]).map(rowToConn);
 
     let existing = null;
-    if (data.authType === "oauth" && data.email) {
+    // Dedup precedence: cursor oauth rows key on machineId (stable even when
+    // profile-email extraction fails); other oauth rows key on email;
+    // apikey rows key on name.
+    // access_token: never dedup — user manages duplicates manually
+    if (data.provider === "cursor" && data.authType === "oauth" && data.providerSpecificData?.machineId) {
+      existing = all.find(c => c.provider === "cursor" && c.providerSpecificData?.machineId === data.providerSpecificData.machineId);
+    } else if (data.authType === "oauth" && data.email) {
       const incomingUsername = data.providerSpecificData?.username;
       const incomingWs = data.providerSpecificData?.chatgptAccountId;
       existing = all.find(c => {
@@ -166,11 +150,9 @@ export async function createProviderConnection(data) {
     } else if (data.authType === "apikey" && data.name) {
       existing = all.find(c => c.authType === "apikey" && c.name === data.name);
     }
-    // access_token: never dedup — user manages duplicates manually
 
     if (existing) {
-      const normalized = resetHealthStateOnActivation(existing, data);
-      const merged = { ...existing, ...normalized, updatedAt: now };
+      const merged = { ...existing, ...data, updatedAt: now };
       upsert(db, merged);
       result = merged;
       return;
@@ -186,7 +168,7 @@ export async function createProviderConnection(data) {
     }
 
     const conn = {
-      id: uuidv4(),
+      id: randomUUID(),
       provider: data.provider,
       authType: data.authType || "oauth",
       name: connectionName,
@@ -211,6 +193,46 @@ export async function createProviderConnection(data) {
   return result;
 }
 
+export async function createProviderConnectionsBulk(items) {
+  if (!Array.isArray(items) || items.length === 0 || items.length > 500) {
+    throw new Error("Bulk connection batch must contain 1-500 items");
+  }
+  const db = await getAdapter();
+  const results = [];
+  db.transaction(() => {
+    for (const data of items) {
+      if (!data?.provider || !data?.apiKey || !data?.name) {
+        results.push({ name: data?.name || null, ok: false, error: "provider, apiKey, and name are required" });
+        continue;
+      }
+      const existing = db.all(`SELECT * FROM providerConnections WHERE provider = ?`, [data.provider])
+        .map(rowToConn)
+        .find((connection) => connection.authType === "apikey" && connection.name === data.name);
+      const now = new Date().toISOString();
+      const connection = existing
+        ? {
+            ...existing,
+            ...data,
+            providerSpecificData: data.providerSpecificData === undefined
+              ? existing.providerSpecificData
+              : data.providerSpecificData,
+            authType: "apikey",
+            updatedAt: now,
+          }
+        : {
+            id: randomUUID(), provider: data.provider, authType: "apikey", name: data.name,
+            priority: data.priority || 1, isActive: true, createdAt: now, updatedAt: now,
+            apiKey: data.apiKey, testStatus: data.testStatus || "unknown",
+            providerSpecificData: data.providerSpecificData,
+          };
+      upsert(db, connection);
+      results.push({ name: data.name, ok: true, id: connection.id, updated: !!existing });
+    }
+    for (const provider of new Set(items.map((item) => item.provider))) reorderInTx(db, provider);
+  });
+  return results;
+}
+
 // Critical: OAuth refresh token race — atomic merge inside transaction
 export async function updateProviderConnection(id, data) {
   const db = await getAdapter();
@@ -219,8 +241,7 @@ export async function updateProviderConnection(id, data) {
     const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
     if (!row) { result = null; return; }
     const existing = rowToConn(row);
-    const normalized = resetHealthStateOnActivation(existing, data);
-    const merged = { ...existing, ...normalized, updatedAt: new Date().toISOString() };
+    const merged = { ...existing, ...data, updatedAt: new Date().toISOString() };
     upsert(db, merged);
     if (data.priority !== undefined) reorderInTx(db, existing.provider);
     result = merged;
@@ -251,65 +272,6 @@ export async function deleteProviderConnectionsByProvider(providerId) {
 export async function reorderProviderConnections(providerId) {
   const db = await getAdapter();
   db.transaction(() => reorderInTx(db, providerId));
-}
-
-/**
- * Bind (or clear) a proxy pool on many connections at once.
- *
- * Why this exists: the dashboard used to issue one PUT per connection in a
- * sequential loop, so applying a pool to 500 accounts meant 500 round trips and
- * 500 separate transactions. At ~50ms each that is tens of seconds of the UI
- * sitting idle, and a failure halfway left the rest unapplied.
- *
- * Everything happens in ONE transaction: read the rows, merge the new
- * `providerSpecificData.proxyPoolId`, upsert, commit. Either the whole batch
- * lands or none of it does. Rows that disappeared between the read and the
- * write are reported as `missing` rather than silently skipped.
- *
- * `proxyPoolId: null` removes the key (unbind) — matching what the per-row PUT
- * does with null/"__none__", so bulk and single leave the same stored shape.
- *
- * @param {{id: string, proxyPoolId: string|null}[]} updates
- * @returns {Promise<{updated: number, missing: string[]}>}
- */
-export async function bulkSetConnectionProxyPool(updates) {
-  const list = Array.isArray(updates) ? updates : [];
-  if (list.length === 0) return { updated: 0, missing: [] };
-
-  const db = await getAdapter();
-  let updated = 0;
-  const missing = [];
-  const now = new Date().toISOString();
-
-  db.transaction(() => {
-    for (const item of list) {
-      const id = item?.id;
-      if (!id) continue;
-      const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
-      if (!row) {
-        missing.push(id);
-        continue;
-      }
-      const existing = rowToConn(row);
-      const next = { ...existing, updatedAt: now };
-      if (item.proxyPoolId === null || item.proxyPoolId === undefined) {
-        // Unbind: drop the key entirely so a stale pool id cannot linger in the
-        // JSON blob and get re-adopted by a later resolve.
-        const psd = { ...(existing.providerSpecificData || {}) };
-        delete psd.proxyPoolId;
-        next.providerSpecificData = psd;
-      } else {
-        next.providerSpecificData = {
-          ...(existing.providerSpecificData || {}),
-          proxyPoolId: item.proxyPoolId,
-        };
-      }
-      upsert(db, next);
-      updated += 1;
-    }
-  });
-
-  return { updated, missing };
 }
 
 export async function cleanupProviderConnections() {

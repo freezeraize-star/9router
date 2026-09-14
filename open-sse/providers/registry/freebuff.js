@@ -20,7 +20,7 @@
  * executors/freebuff.js. cost_mode:"free" is what admits a session on the free
  * (country-gated, session-limited) tier instead of billing credits.
  */
-export default {
+const freebuffRegistry = {
   id: "freebuff",
   priority: 45,
   hasFree: true,
@@ -34,34 +34,18 @@ export default {
     website: "https://freebuff.com",
     notice: {
       signupUrl: "https://freebuff.com",
-      text: "Free ad-supported coding agent by Codebuff. Sign in with your Freebuff/Codebuff account via browser login. Each model is priced in Freebucks per hour of session, charged once when the session starts. Your daily Freebucks refill at midnight Pacific; the wallet keeps what you buy or earn. Free tier is ad-supported and limited in some regions (limited mode: 6 x 1-hour sessions/day); full mode runs in select countries. ⚠️ One account has ONE active session locked to ONE model — requesting a different model while a session is active returns 'model_locked' (409); use a separate account per model, or wait for the session to expire.",
+      text: "Free ad-supported coding agent by Codebuff. Sign in with your Freebuff/Codebuff account via browser login. Free tier is ad-supported and limited in some regions (limited mode: 6 x 1-hour sessions/day); full mode runs in select countries. ⚠️ One account has ONE active session locked to ONE model — requesting a different model while a session is active returns 'model_locked' (409); use a separate account per model, or wait for the session to expire.",
     },
   },
   category: "free",
   authType: "oauth",
-  // Request pacing, in SECONDS. `gapSeconds` is the minimum idle gap between
-  // two requests on the same account — set it to 10 and that account must idle
-  // 10s between requests, regardless of which model it serves.
-  //
-  // Why this exists as provider config rather than an env var: an account that
-  // served 25 requests in 9 minutes with 15-60s gaps is the anti-abuse
-  // signature that preceded a real ban, so the safe gap is a property of THIS
-  // provider's backend, not of the machine it runs on. Editing one number here
-  // is the whole tuning story. FREEBUFF_PACING_GAP_MS still overrides it for
-  // ops; see shared/freebuffPacing.js for the resolution order.
-  //
-  // 20s is closer to a human cadence than the 35s tuned for multi-account
-  // farms; with a single account the bounded wait in chat.js absorbs the rest.
-  pacing: {
-    gapSeconds: 20,
-  },
   authModes: ["oauth"],
   hasOAuth: true,
   transport: {
     baseUrl: "https://www.codebuff.com/api/v1/chat/completions",
     format: "openai",
     headers: {
-      "User-Agent": "Bun/1.3.14",
+      "User-Agent": "ai-sdk/openai-compatible/1.0/codebuff",
     },
     retry: {
       429: { attempts: 2, delayMs: 2000 },
@@ -78,47 +62,15 @@ export default {
   features: {
     usage: true,
   },
-  // Mirrors the Freebuff waiting-room picker (upstream FREEBUFF_MODELS) as of
-  // 2026-09-07. NO per-model prices live here: Freebucks pricing is
-  // server-authoritative — the session response's `freebucks` block carries
-  // `prices` (model → Freebucks/hr) plus an announced `priceChanges` schedule
-  // (promos like Solar Pro 4's Labor Day run expire server-side; see
-  // services/usage/freebuff.js which folds both in, exactly like the upstream
-  // CLI which hardcodes no number). Plus the capacity-limited Fable trial.
-  // deepseek-v4-pro and minimax-m3 were withdrawn upstream (2026-08-26 /
-  // 2026-08-20) and ox-alpha (2026-08-27) + gemini-3.8-flash (2026-09-03)
-  // never stuck — none are claimable anymore.
-  // z-ai/glm-5.2 is a referral reward (not a free pick), luna-es / kimi-k3-eco
-  // are god-only rows, and the `-max` variants are provisioned per-account —
-  // all intentionally omitted. Fable is a capacity-limited WAVE trial: sessions
-  // only claim while the backend advertises it via limitedModelOffers on the
-  // session status (the executor auto-checks before claiming); the model is
-  // otherwise refused. Muse Spark 1.3 was withdrawn 2026-09-07 (404
-  // model_not_found at Meta on every key) and 1.2 took its place.
+  // Mirrors the CLI's free picker (FREEBUFF_ROOT_AGENT_ID_BY_MODEL).
+  // mimo/mimo-v2.5-pro is intentionally absent — it is not a free-tier model
+  // and would bill credits or be rejected under the base3-free agent.
   models: [
-    { id: "z-ai/glm-5.3-flash", name: "GLM 5.3 Flash" },
-    // Renamed by upstream on 2026-09-10: the undated wire id moved to V4.1 Flash
-    // (and became natively multimodal). The id is unchanged on purpose.
-    { id: "deepseek/deepseek-v4-flash", name: "DeepSeek V4.1 Flash" },
-    { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna" },
+    { id: "deepseek/deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+    { id: "deepseek/deepseek-v4-pro", name: "DeepSeek V4 Pro" },
     { id: "mimo/mimo-v2.5", name: "MiMo 2.5" },
-    { id: "upstage/solar-pro4", name: "Solar Pro 4" },
-    // Muse Spark 1.3 is the LIVE row on every surface since 2026-09-04. 1.2 was
-    // retired from the pickers on 2026-09-02 and is served only so sessions
-    // admitted before that deploy can finish.
-    //
-    // We carried 1.2 as the standing row because a 2026-09-08 probe saw 1.3
-    // 404 at Meta. That was a stale key, not a withdrawal: upstream serves both
-    // ids from one shared pool, and a live session read on 2026-09-12 returns
-    // `prices` for BOTH at the same 15 Freebucks/hr. Leading with 1.2 therefore
-    // hides the newer, better model behind a row upstream no longer recommends.
-    { id: "meta/muse-spark-1.3-contributor", name: "Muse Spark 1.3" },
-    { id: "anthropic/claude-fable-5", name: "Claude Fable 5 (limited offer)" },
-    // Kept selectable on purpose: a session already admitted on 1.2 must stay
-    // runnable, and its root agent is still registered. `supersededBy` is the
-    // upstream pointer a picker uses to offer the one-click switch to 1.3 — it
-    // is data for the UI, not a gate, so nothing here stops a 1.2 request.
-    { id: "meta/muse-spark-1.2-contributor", name: "Muse Spark 1.2", supersededBy: "meta/muse-spark-1.3-contributor" },
+    { id: "minimax/minimax-m3", name: "MiniMax M3" },
+    { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna" },
   ],
   // Login-flow host — the CLI in freebuff mode logs in via freebuff.com, and
   // the server builds loginUrl from the host it was called on, so the link the
@@ -130,3 +82,5 @@ export default {
     oauthTimeoutMs: 300000,
   },
 };
+
+export default freebuffRegistry;

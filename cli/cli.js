@@ -110,9 +110,9 @@ function getDisplayHost() {
   return host === DEFAULT_HOST ? "localhost" : host;
 }
 const MAX_PORT_ATTEMPTS = 10;
-// Identifiers for killAllAppProcesses - only kill 9router specifically
+// Identifiers for killAllAppProcesses - only kill this app's processes
 const PROCESS_IDENTIFIERS = [
-  '9router'  // Only package name - avoid killing other apps
+  APP_NAME  // Use package name from package.json (e.g. vansrouter)
 ];
 
 // Parse arguments
@@ -216,6 +216,7 @@ function killTunnelByPidFile() {
   killByPidFile(path.join(tunnelDir, "tailscale.pid"));
 }
 
+// SECURITY: only matches localhost/127.0.0.1 processes to kill stale tunnels — no remote exposure
 // Kill cloudflared whose --url targets this app's port (covers stale PID file case)
 function killCloudflaredByAppPort(appPort) {
   if (!appPort) return [];
@@ -277,7 +278,7 @@ function killAllAppProcesses(appPort) {
             // Avoids killing editors/grep/strace/cursor that just have "9router" in cmdline.
             const cmd = line.toLowerCase();
             const isAppProcess =
-              (cmd.includes("node") && cmd.includes("9router") && (cmd.includes("cli.js") || cmd.includes("\\9router") || cmd.includes("/9router")))
+              (cmd.includes("node") && cmd.includes(APP_NAME.toLowerCase()) && (cmd.includes("cli.js") || cmd.includes(`\\${APP_NAME.toLowerCase()}`) || cmd.includes(`/${APP_NAME.toLowerCase()}`)))
               || cmd.includes("next-server");
             if (isAppProcess) {
               const match = line.match(/^"(\d+)"/);
@@ -303,7 +304,7 @@ function killAllAppProcesses(appPort) {
             // Avoids killing grep/strace/editors/cursor that incidentally match "9router".
             const cmd = line.toLowerCase();
             const isAppProcess =
-              (cmd.includes("node") && cmd.includes("9router") && (cmd.includes("cli.js") || cmd.includes("/9router")))
+              (cmd.includes("node") && cmd.includes(APP_NAME.toLowerCase()) && (cmd.includes("cli.js") || cmd.includes(`/${APP_NAME.toLowerCase()}`)))
               || cmd.includes("next-server");
             if (isAppProcess) {
               const parts = line.trim().split(/\s+/);
@@ -612,7 +613,7 @@ function startServer(updatePromise) {
   function spawnServer() {
     serverStartTime = Date.now();
     crashLog = [];
-    const child = spawn(RUNTIME, ["--dns-result-order=ipv4first", "--max-old-space-size=6144", serverPath], {
+    const child = spawn(RUNTIME, ["--max-old-space-size=6144", serverPath], {
       cwd: standaloneDir,
       stdio: showLog ? "inherit" : ["ignore", "ignore", "pipe"],
       detached: true,
@@ -620,7 +621,7 @@ function startServer(updatePromise) {
       env: {
         ...buildEnvWithRuntime(process.env),
         PORT: port.toString(),
-        HOSTNAME: host
+        HOSTNAME: host,
       }
     });
     if (!showLog && child.stderr) {
@@ -785,7 +786,7 @@ function startServer(updatePromise) {
           // Windows/Linux: spawn detached bgProcess (systray works fine in child)
           console.log(`\n⏳ Starting background process... (tray icon will appear in ~3s)`);
 
-          const bgProcess = spawn(process.execPath, ["--dns-result-order=ipv4first", __filename, "--tray", "--skip-update", "-p", port.toString()], {
+          const bgProcess = spawn(process.execPath, [__filename, "--tray", "--skip-update", "-p", port.toString()], {
             detached: true,
             stdio: "ignore",
             windowsHide: true,

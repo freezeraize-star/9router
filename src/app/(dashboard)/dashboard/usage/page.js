@@ -2,7 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { UsageStats, RequestLogger, CardSkeleton, SegmentedControl, Button } from "@/shared/components";
+import { UsageStats, RequestLogger, CardSkeleton, SegmentedControl } from "@/shared/components";
 import RequestDetailsTab from "./components/RequestDetailsTab";
 
 const PERIODS = [
@@ -11,7 +11,6 @@ const PERIODS = [
   { value: "7d", label: "7D" },
   { value: "30d", label: "30D" },
   { value: "60d", label: "60D" },
-  { value: "all", label: "All Time" },
 ];
 
 export default function UsagePage() {
@@ -54,26 +53,13 @@ function UsageContent() {
           className="w-full sm:w-auto"
         />
         {activeTab === "overview" && (
-          <div className="flex items-center gap-2">
-            <SegmentedControl
-              options={PERIODS}
-              value={period}
-              onChange={setPeriod}
-              size="sm"
-              className="w-full sm:w-auto"
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              icon="download"
-              onClick={() => {
-                window.open("/api/usage/history?format=csv", "_blank");
-              }}
-              title="Export usage history to CSV"
-            >
-              Export CSV
-            </Button>
-          </div>
+          <SegmentedControl
+            options={PERIODS}
+            value={period}
+            onChange={setPeriod}
+            size="sm"
+            className="w-full sm:w-auto"
+          />
         )}
       </div>
 

@@ -20,7 +20,7 @@ const getHermesEnvPath = () => path.join(getHermesDir(), ".env");
 const MODEL_BLOCK_RE = /^model:[ \t]*\r?\n((?:[ \t]+.*\r?\n?|[ \t]*\r?\n)*)/m;
 
 const buildModelBlock = (model, baseUrl) =>
-  `model:\n  default: "${model}"\n  provider: "custom"\n  base_url: "${baseUrl}"\n  api_key: \${OPENAI_API_KEY}\n`;
+  `model:\n  default: "${model}"\n  provider: "custom"\n  base_url: "${baseUrl}"\n  api_key: "\${OPENAI_API_KEY}"\n`;
 
 // Parse current model block back to fields (best-effort, simple key:value)
 const parseModelBlock = (yaml) => {
@@ -114,7 +114,6 @@ export async function GET() {
       configPath: getHermesConfigPath(),
     });
   } catch (error) {
-    console.log("Error checking hermes settings:", error);
     return NextResponse.json({ error: "Failed to check hermes settings" }, { status: 500 });
   }
 }
@@ -149,7 +148,6 @@ export async function POST(request) {
       configPath: getHermesConfigPath(),
     });
   } catch (error) {
-    console.log("Error updating hermes settings:", error);
     return NextResponse.json({ error: "Failed to update hermes settings" }, { status: 500 });
   }
 }
@@ -157,20 +155,14 @@ export async function POST(request) {
 export async function DELETE() {
   try {
     const configPath = getHermesConfigPath();
-    let yaml = "";
-    try {
-      yaml = await fs.readFile(configPath, "utf-8");
-    } catch (error) {
-      if (error.code === "ENOENT") {
-        return NextResponse.json({ success: true, message: "No config file to reset" });
-      }
-      throw error;
+    const yaml = await readConfigYaml();
+    if (!yaml) {
+      return NextResponse.json({ success: true, message: "No config file to reset" });
     }
     const newYaml = removeModelBlock(yaml);
     await fs.writeFile(configPath, newYaml);
     return NextResponse.json({ success: true, message: `${PROVIDER_NAME} model block removed` });
   } catch (error) {
-    console.log("Error resetting hermes settings:", error);
     return NextResponse.json({ error: "Failed to reset hermes settings" }, { status: 500 });
   }
 }

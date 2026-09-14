@@ -142,13 +142,6 @@ function systemReminderText(content) {
 
 // Convert single Claude message - returns single message or array of messages
 function convertClaudeMessage(msg) {
-  // Some clients send content as a single block object; normalize to the
-  // one-element array every branch below (the system-reminder fold included)
-  // expects. Must run BEFORE the role branch: systemReminderText only reads
-  // arrays and strings, so a bare-object system turn was dropped outright.
-  if (msg.content && typeof msg.content === "object" && !Array.isArray(msg.content)) {
-    msg.content = [msg.content];
-  }
   // Mid-conversation system message -> user (per Anthropic placement rules)
   if (msg.role === ROLE.SYSTEM) {
     const text = systemReminderText(msg.content);
@@ -180,6 +173,17 @@ function convertClaudeMessage(msg) {
               type: OPENAI_BLOCK.IMAGE_URL,
               image_url: {
                 url: encodeDataUri(block.source.media_type, block.source.data)
+              }
+            });
+          }
+          break;
+
+        case CLAUDE_BLOCK.DOCUMENT:
+          if (block.source?.type === "base64") {
+            parts.push({
+              type: OPENAI_BLOCK.FILE,
+              file: {
+                file_data: encodeDataUri(block.source.media_type, block.source.data)
               }
             });
           }

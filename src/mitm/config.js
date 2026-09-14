@@ -26,26 +26,14 @@ const TARGET_HOSTS = [
 const URL_PATTERNS = {
   antigravity: [":generateContent", ":streamGenerateContent"],
   copilot: ["/chat/completions", "/v1/messages", "/responses"],
-  // Legacy path form. Kiro IDE 1.0.228+ posts to `/` with x-amz-target instead —
-  // see isChatRequest() for the header-based match.
   kiro: ["/generateAssistantResponse"],
   cursor: ["/BidiAppend", "/RunSSE", "/RunPoll", "/Run"],
 };
 
-/**
- * Whether this request is a chat turn we should intercept (vs passthrough).
- * Kiro Runtime moved GenerateAssistantResponse from path `/generateAssistantResponse`
- * to `POST /` + `x-amz-target: KiroRuntimeService.GenerateAssistantResponse`
- * (verified via live mitmproxy capture of Kiro IDE 1.0.228).
- */
 function isChatRequest(tool, req) {
   const patterns = URL_PATTERNS[tool] || [];
-  if (patterns.some((p) => (req.url || "").includes(p))) return true;
-  if (tool === "kiro") {
-    const target = String(req.headers?.["x-amz-target"] || "");
-    return target.includes("GenerateAssistantResponse");
-  }
-  return false;
+  if (patterns.some((pattern) => (req.url || "").includes(pattern))) return true;
+  return tool === "kiro" && String(req.headers?.["x-amz-target"] || "").includes("GenerateAssistantResponse");
 }
 
 // Synonym map: rawModel from request → canonical alias key in mitmAlias DB
@@ -55,13 +43,6 @@ const MODEL_SYNONYMS = {
     "gemini-3.5-flash-high": "gemini-3-flash-agent",
     "gemini-3.5-flash-medium": "gemini-3.5-flash-low",
     "gemini-3.5-flash-extra-low": "gemini-3.5-flash-extra-low",
-    "gemini-3.8-flash": "gemini-3.8-flash-medium",
-    "gemini-3.8-flash-high": "gemini-3.8-flash-high",
-    "gemini-3.8-flash-medium": "gemini-3.8-flash-medium",
-    "gemini-3.8-flash-low": "gemini-3.8-flash-low",
-    "gemini-3.7-flash-high": "gemini-3.7-flash-high",
-    "gemini-3.7-flash-medium": "gemini-3.7-flash-medium",
-    "gemini-3.7-flash-low": "gemini-3.7-flash-low",
     "gemini-3.1-pro-high": "gemini-pro-agent",
     "gemini-3-pro-high": "gemini-pro-agent",
     "gemini-3-pro-low": "gemini-3.1-pro-low",

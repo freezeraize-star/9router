@@ -19,38 +19,44 @@ const CLAUDE_CONFIG = {
 const OAUTH_429_COOLDOWN_MS = 180000;
 const oauthCooldown = new Map();
 
-// Dedup + short TTL cache per access token. Many tabs / many accounts / auto-refresh
-// all funnel through here; without this each call hits Anthropic and triggers 429.
 const USAGE_CACHE_TTL_MS = 300000;
-const usageCache = new Map(); // token -> { promise } | { result, expiresAt }
+const USAGE_CACHE_MAX_ENTRIES = 100;
+const usageCache = new Map();
+
+function pruneUsageCache() {
+  const now = Date.now();
+  for (const [token, entry] of usageCache) {
+    if (!entry.promise && entry.expiresAt <= now) usageCache.delete(token);
+  }
+  while (usageCache.size > USAGE_CACHE_MAX_ENTRIES) {
+    usageCache.delete(usageCache.keys().next().value);
+  }
+}
 
 export async function getClaudeUsage(accessToken, proxyOptions = null, options = {}) {
-  const force = options?.force === true;
-
-  // Serve in-flight or fresh cached result (skip on manual force)
+  const force = options.force === true;
+  pruneUsageCache();
   if (!force && accessToken) {
-    const hit = usageCache.get(accessToken);
-    if (hit?.promise) return hit.promise;
-    if (hit && hit.expiresAt > Date.now()) return hit.result;
+    const cached = usageCache.get(accessToken);
+    if (cached?.promise) return cached.promise;
+    if (cached?.expiresAt > Date.now()) return cached.result;
   }
 
-  const stale = (!force && accessToken && usageCache.get(accessToken)?.result) || null;
-
-  const promise = (async () => {
-    const result = await fetchClaudeUsageRaw(accessToken, proxyOptions);
-    // Only cache real quota data, not soft-failure {message: ...} payloads
-    if (accessToken && result?.quotas) {
-      usageCache.set(accessToken, {
-        result,
-        expiresAt: Date.now() + USAGE_CACHE_TTL_MS,
-      });
+  const stale = !force && accessToken ? usageCache.get(accessToken)?.result : null;
+  const promise = fetchClaudeUsageRaw(accessToken, proxyOptions).then((result) => {
+    if (accessToken && result?.quotas && Object.keys(result.quotas).length > 0) {
+      if (usageCache.get(accessToken)?.promise === promise) {
+        usageCache.set(accessToken, { result, expiresAt: Date.now() + USAGE_CACHE_TTL_MS });
+        pruneUsageCache();
+      }
       return result;
     }
-    // Soft failure (429/error): prefer the last good read over a transient error
-    if (stale) return stale;
-    return result;
-  })();
-
+    if (accessToken && usageCache.get(accessToken)?.promise === promise) {
+      if (stale) usageCache.set(accessToken, { result: stale, expiresAt: Date.now() + USAGE_CACHE_TTL_MS });
+      else usageCache.delete(accessToken);
+    }
+    return stale || result;
+  });
   if (accessToken) usageCache.set(accessToken, { promise });
   return promise;
 }
@@ -107,22 +113,6 @@ async function fetchClaudeUsageRaw(accessToken, proxyOptions = null) {
         if (key.startsWith("seven_day_") && key !== "seven_day" && hasUtilization(value)) {
           const modelName = key.replace("seven_day_", "");
           quotas[`weekly ${modelName} (7d)`] = createQuotaObject(value);
-        }
-      }
-
-      // Model-scoped weekly limits (e.g. Fable) arrive in limits[], not as
-      // seven_day_* keys: { kind: "weekly_scoped", percent, resets_at,
-      // scope: { model: { display_name: "Fable" } } }. No limits entry means
-      // the account has no such window — omit the row, never fabricate one.
-      if (Array.isArray(data.limits)) {
-        for (const limit of data.limits) {
-          if (limit?.kind !== "weekly_scoped") continue;
-          const modelName = String(limit?.scope?.model?.display_name || "").trim().toLowerCase();
-          if (!modelName || typeof limit.percent !== "number") continue;
-          quotas[`weekly ${modelName} (7d)`] = createQuotaObject({
-            utilization: Math.max(0, Math.min(100, limit.percent)),
-            resets_at: limit.resets_at,
-          });
         }
       }
 

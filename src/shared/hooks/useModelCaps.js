@@ -7,7 +7,7 @@ import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 let cache = null; // { byFull, byId } | null
 let inflight = null;
 
-export function buildMaps(models) {
+function buildMaps(models) {
   const byFull = {};
   const byId = {};
   for (const m of models || []) {
@@ -38,14 +38,12 @@ function loadModelCaps() {
 }
 
 // Resolve caps from a "provider/model" string or a bare model id.
-export function resolveCaps(byFull, byId, key) {
+function resolveCaps(byFull, byId, key) {
   if (!key) return null;
   if (byFull[key]) return byFull[key];
-  const qualified = key.includes("/");
-  const bare = qualified ? key.slice(key.indexOf("/") + 1) : key;
-  // Do not leak custom limits from another provider with the same model ID.
-  if (!qualified && byId[bare]) return byId[bare];
-  const provider = qualified ? key.slice(0, key.indexOf("/")) : null;
+  const bare = key.includes("/") ? key.slice(key.indexOf("/") + 1) : key;
+  if (byId[bare]) return byId[bare];
+  const provider = key.includes("/") ? key.slice(0, key.indexOf("/")) : null;
   const c = getCapabilitiesForModel(provider, bare);
   return {
     vision: c.vision,
@@ -61,25 +59,12 @@ export function useModelCaps() {
   const [byId, setById] = useState(() => cache?.byId || {});
 
   useEffect(() => {
+    if (cache) return;
     let alive = true;
-    const sync = (maps) => {
+    loadModelCaps().then((maps) => {
       if (alive) { setByFull(maps.byFull); setById(maps.byId); }
-    };
-    if (cache) {
-      sync(cache);
-    } else {
-      loadModelCaps().then(sync);
-    }
-    // Custom models change at runtime — drop the shared cache and refetch
-    const invalidate = () => {
-      cache = null;
-      loadModelCaps().then(sync);
-    };
-    window.addEventListener("customModelChanged", invalidate);
-    return () => {
-      alive = false;
-      window.removeEventListener("customModelChanged", invalidate);
-    };
+    });
+    return () => { alive = false; };
   }, []);
 
   const getCaps = useCallback(

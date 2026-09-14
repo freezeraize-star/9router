@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { FILTERS } from "./filters.js";
-import { normalizeDiscoveredModels } from "@/shared/utils/modelTokenLimits";
+import { assertPublicUrl } from "@/shared/utils/ssrfGuard.js";
 
 export const dynamic = "force-dynamic";
 
@@ -19,13 +19,17 @@ export async function GET(request) {
   }
 
   try {
-    const res = await fetch(url);
+    await assertPublicUrl(url);
+    const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(5000) });
     if (!res.ok) {
       return NextResponse.json({ data: [] });
     }
     const json = await res.json();
     const raw = json.data ?? json.models ?? json;
-    const data = normalizeDiscoveredModels(filter(Array.isArray(raw) ? raw : []));
+    // Resolve registry entry by provider name so filters can use the registry as source of truth.
+    // Convention: <provider>-free key → strip suffix to find registry id (e.g. "nvidia-free" → "nvidia").
+    const providerId = type.endsWith("-free") ? type.slice(0, -"-free".length) : type;
+    const data = filter(Array.isArray(raw) ? raw : []);
     return NextResponse.json({ data });
   } catch {
     return NextResponse.json({ data: [] });

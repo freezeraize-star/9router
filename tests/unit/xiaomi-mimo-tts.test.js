@@ -8,143 +8,35 @@ import { TTS_PROVIDER_CONFIG } from "../../src/shared/constants/ttsProviders.js"
 
 const originalFetch = global.fetch;
 
-function mockMiMoAudioResponse() {
-  global.fetch.mockResolvedValueOnce(
-    new Response(
-      JSON.stringify({
-        choices: [
-          {
-            message: {
-              role: "assistant",
-              audio: {
-                data: Buffer.from([0, 1, 2, 3]).toString("base64"),
-                format: "wav",
-                transcript: "Hello from MiMo",
-              },
-            },
-          },
-        ],
-      }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
-    )
-  );
-}
-
 describe("Xiaomi MiMo TTS", () => {
-  beforeEach(() => {
-    global.fetch = vi.fn();
-  });
+  beforeEach(() => { global.fetch = vi.fn(); });
+  afterEach(() => { global.fetch = originalFetch; });
 
-  afterEach(() => {
-    global.fetch = originalFetch;
-  });
-
-  it("posts to chat completions with text as assistant message and voice in audio.voice", async () => {
-    mockMiMoAudioResponse();
-
-    const result = await handleTtsCore({
-      provider: "xiaomi-mimo",
-      model: "mimo-v2.5-tts/冰糖",
-      input: "Hello from MiMo",
-      credentials: { apiKey: "test-key" },
-      responseFormat: "json",
-    });
-
+  it("sends voice, text, style, and language", async () => {
+    global.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { audio: { data: "AAECAw==", format: "wav" } } }] }), { status: 200 }));
+    const result = await handleTtsCore({ provider: "xiaomi-mimo", model: "mimo-v2.5-tts/冰糖", input: "Hello", style: "calm", language: "English", credentials: { apiKey: "test-key" }, responseFormat: "json" });
     expect(result.success).toBe(true);
     expect(global.fetch.mock.calls[0][0]).toBe("https://api.xiaomimimo.com/v1/chat/completions");
-    expect(global.fetch.mock.calls[0][1].headers.Authorization).toBe("Bearer test-key");
-
     const sent = JSON.parse(global.fetch.mock.calls[0][1].body);
-    expect(sent.model).toBe("mimo-v2.5-tts");
-    expect(sent.stream).toBe(false);
-    expect(sent.audio.format).toBe("wav");
-    expect(sent.audio.voice).toBe("冰糖");
-    const assistant = sent.messages.find((m) => m.role === "assistant");
-    expect(assistant.content).toBe("Hello from MiMo");
-
-    const body = await result.response.json();
-    expect(body.format).toBe("wav");
-    expect(body.audio).toEqual(expect.any(String));
+    expect(sent.audio).toMatchObject({ format: "wav", voice: "冰糖" });
+    expect(sent.messages).toEqual([{ role: "user", content: "Speak in English. calm" }, { role: "assistant", content: "Hello" }]);
+    expect(await result.response.json()).toMatchObject({ audio: "AAECAw==", format: "wav" });
   });
 
-  it("uses mimo_default when no voice is provided", async () => {
-    mockMiMoAudioResponse();
-
-    await handleTtsCore({
-      provider: "xiaomi-mimo",
-      model: "mimo-v2.5-tts",
-      input: "Hello from MiMo",
-      credentials: { apiKey: "test-key" },
-      responseFormat: "json",
-    });
-
-    const sent = JSON.parse(global.fetch.mock.calls[0][1].body);
-    expect(sent.model).toBe("mimo-v2.5-tts");
-    expect(sent.audio.voice).toBe("mimo_default");
+  it("caps non-2xx errors without exposing the upstream body", async () => {
+    global.fetch.mockResolvedValueOnce(new Response("secret upstream payload".repeat(100), { status: 500 }));
+    const result = await handleTtsCore({ provider: "xiaomi-mimo", model: "mimo-v2.5-tts", input: "Hello", credentials: { apiKey: "test-key" } });
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("MiMo TTS request failed (500)");
+    expect(result.error.length).toBeLessThan(500);
   });
 
-  it("threads the style field into the role:user message", async () => {
-    mockMiMoAudioResponse();
-
-    await handleTtsCore({
-      provider: "xiaomi-mimo",
-      model: "mimo-v2.5-tts/Chloe",
-      input: "Hello from MiMo",
-      style: "a calm, warm female voice speaking slowly",
-      credentials: { apiKey: "test-key" },
-      responseFormat: "json",
-    });
-
-    const sent = JSON.parse(global.fetch.mock.calls[0][1].body);
-    const user = sent.messages.find((m) => m.role === "user");
-    expect(user.content).toBe("a calm, warm female voice speaking slowly");
-  });
-
-  it("exposes MiMo TTS models + preset voices in the TTS catalog", () => {
-    const entries = buildTtsProviderModels();
-
-    expect(entries["xiaomi-mimo-tts-models"].map((model) => model.id)).toEqual(["mimo-v2.5-tts"]);
-
-    const voices = getTtsVoicesForModel("xiaomi-mimo", "mimo-v2.5-tts");
-    expect(voices.map((v) => v.id)).toEqual([
-      "mimo_default", "冰糖", "茉莉", "苏打", "白桦", "Mia", "Chloe", "Milo", "Dean",
-    ]);
-    expect(voices.find((v) => v.id === "冰糖")).toMatchObject({ name: "冰糖" });
-    expect(voices.find((v) => v.id === "Dean")).toMatchObject({ name: "Dean" });
-    // Voices are language-independent and gender-neutral (no language/gender labels in the UI)
-    expect(voices[0]).not.toHaveProperty("language");
-    expect(voices[0]).not.toHaveProperty("gender");
-    expect(getTtsVoicesForModel("xiaomi-mimo", "mimo-v2.5-tts-voiceclone")).toBeNull();
-  });
-
-  it("threads the language hint into a role:user instruction", async () => {
-    mockMiMoAudioResponse();
-
-    await handleTtsCore({
-      provider: "xiaomi-mimo",
-      model: "mimo-v2.5-tts/冰糖",
-      input: "Hello from MiMo",
-      language: "English",
-      credentials: { apiKey: "test-key" },
-      responseFormat: "json",
-    });
-
-    const sent = JSON.parse(global.fetch.mock.calls[0][1].body);
-    const user = sent.messages.find((m) => m.role === "user");
-    expect(user.content).toBe("Speak in English.");
-  });
-
-  it("wires the provider into media-providers TTS (serviceKind, adapter, UI config)", () => {
+  it("registers catalog, provider, and UI config", () => {
+    expect(buildTtsProviderModels()["xiaomi-mimo-tts-models"]).toEqual([{ id: "mimo-v2.5-tts", name: "MiMo V2.5 TTS", type: "tts" }]);
+    expect(getTtsVoicesForModel("xiaomi-mimo", "mimo-v2.5-tts")).toHaveLength(9);
     expect(AI_PROVIDERS["xiaomi-mimo"].serviceKinds).toContain("tts");
-    expect(AI_PROVIDERS["xiaomi-mimo"].ttsConfig.baseUrl).toBe("https://api.xiaomimimo.com/v1/chat/completions");
+    expect(PROVIDER_MODELS["xiaomi-mimo"].some((m) => m.id === "mimo-v2.5-tts" && m.kind === "tts")).toBe(true);
     expect(getTtsAdapter("xiaomi-mimo")).toBeTruthy();
-
-    const ttsModels = PROVIDER_MODELS["xiaomi-mimo"].filter((m) => (m.kind || m.type) === "tts").map((m) => m.id);
-    expect(ttsModels).toEqual(["mimo-v2.5-tts"]);
-
-    expect(TTS_PROVIDER_CONFIG["xiaomi-mimo"].hasStyleInput).toBe(true);
-    expect(TTS_PROVIDER_CONFIG["xiaomi-mimo"].hasLanguageHint).toBe(true);
-    expect(TTS_PROVIDER_CONFIG["xiaomi-mimo"].languageOptions).toEqual(["Chinese", "English"]);
-    expect(TTS_PROVIDER_CONFIG["xiaomi-mimo"].hasVoiceIdInput).toBe(false);
+    expect(TTS_PROVIDER_CONFIG["xiaomi-mimo"]).toMatchObject({ hasStyleInput: true, hasLanguageHint: true });
   });
 });

@@ -25,6 +25,6 @@ describe("SearXNG provider configuration", () => {
   it("preserves the loopback default when SEARXNG_URL is unset", async () => {
     const provider = await loadProvider(undefined);
 
-    expect(provider.searchConfig.baseUrl).toBe("http://localhost:8888/search");
+    expect(provider.searchConfig.baseUrl).toBe("http://127.0.0.1:8888/search");
   });
 });

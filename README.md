@@ -1,29 +1,29 @@
 <div align="center">
-  <img src="./images/9router.png?1" alt="9Router Dashboard" width="800"/>
+  <img src="./images/9router.png?1" alt="VansRouter Dashboard" width="800"/>
   
-  # 9Router - FREE AI Router & Token Saver
+  # VansRouter - FREE AI Router & Token Saver
   
   **Never stop coding. Save 20-40% tokens with RTK + auto-fallback to FREE & cheap AI models.**
   
   **Connect All AI Code Tools (Claude Code, Cursor, Antigravity, Copilot, Codex, Gemini, OpenCode, Cline, OpenClaw...) to 40+ AI Providers & 100+ Models.**
   
-  [![npm](https://img.shields.io/npm/v/9router.svg)](https://www.npmjs.com/package/9router)
-  [![Downloads](https://img.shields.io/npm/dm/9router.svg)](https://www.npmjs.com/package/9router)
-  [![Docker Pulls](https://img.shields.io/docker/pulls/decolua/9router.svg?logo=docker&label=Docker%20pulls)](https://hub.docker.com/r/decolua/9router)
-  [![GHCR](https://img.shields.io/badge/GHCR-decolua%2F9router-blue?logo=github)](https://github.com/decolua/9router/pkgs/container/9router)
-  [![License](https://img.shields.io/npm/l/9router.svg)](https://github.com/decolua/9router/blob/main/LICENSE)
+  [![npm](https://img.shields.io/npm/v/vansrouter.svg)](https://www.npmjs.com/package/vansrouter)
+  [![Downloads](https://img.shields.io/npm/dm/vansrouter.svg)](https://www.npmjs.com/package/vansrouter)
+  [![Docker Pulls](https://img.shields.io/docker/pulls/vanszs/vansrouter.svg?logo=docker&label=Docker%20pulls)](https://hub.docker.com/r/vanszs/vansrouter)
+  [![GHCR](https://img.shields.io/badge/GHCR-vanszs%2Fvansrouter-blue?logo=github)](https://github.com/Vanszs/VansRouter/pkgs/container/vansrouter)
+  [![License](https://img.shields.io/npm/l/vansrouter.svg)](https://github.com/Vanszs/VansRouter/blob/main/LICENSE)
 
-<a href="https://trendshift.io/repositories/22628" target="_blank"><img src="https://trendshift.io/api/badge/repositories/22628" alt="decolua%2F9router | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/22628" target="_blank"><img src="https://trendshift.io/api/badge/repositories/22628" alt="vanszs%2Fvansrouter | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
 [🚀 Quick Start](#-quick-start) • [💡 Features](#-key-features) • [📖 Setup](#-setup-guide) • [🌐 Website](https://9router.com)
 
-[🇧🇷 Português (Brasil)](./i18n/README.pt-BR.md) • [🇻🇳 Tiếng Việt](./i18n/README.vi.md) • [🇨🇳 中文](./i18n/README.zh-CN.md) • [🇯🇵 日本語](./i18n/README.ja-JP.md) • [🇷🇺 Русский](./i18n/README.ru.md) • [🇹🇭 ไทย](./i18n/README.th.md) • [🇮🇷 فارسی](./i18n/README.fa_IR.md) • [🇮🇩 Indonesia](./i18n/README.id-ID.md) • [🇪🇸 Español](./i18n/README.es.md) • [🇫🇷 Français](./i18n/README.fr.md)
+[🇻🇳 Tiếng Việt](./i18n/README.vi.md) • [🇨🇳 中文](./i18n/README.zh-CN.md) • [🇯🇵 日本語](./i18n/README.ja-JP.md) • [🇷🇺 Русский](./i18n/README.ru.md) • [🇹🇭 ไทย](./i18n/README.th.md) • [🇮🇷 فارسی](./i18n/README.fa_IR.md)
 
 </div>
 
 ---
 
-## 🤔 Why 9Router?
+## 🤔 Why VansRouter?
 
 **Stop wasting money, tokens and hitting limits:**
 
@@ -33,13 +33,59 @@
 - ❌ Expensive APIs ($20-50/month per provider)
 - ❌ Manual switching between providers
 
-**9Router solves this:**
+**VansRouter solves this:**
 
 - ✅ **RTK Token Saver** - Auto-compress tool_result content, save 20-40% tokens per request
 - ✅ **Maximize subscriptions** - Track quota, use every bit before reset
 - ✅ **Auto fallback** - Subscription → Cheap → Free, zero downtime
 - ✅ **Multi-account** - Round-robin between accounts per provider
 - ✅ **Universal** - Works with Claude Code, Codex, Cursor, Cline, any CLI tool
+
+---
+
+## 📊 Comparison: VansRouter vs 9Router vs OmniRoute
+
+### Logic & Backend — what each has
+
+| Feature | 9Router | OmniRoute | **VansRouter** |
+|---------|---------|-----------|---------------|
+| **Gemini 3.7 Tiered Support** | ❌ | ❌ | ✅ High / Med / Low tiered reasoning routing |
+| **Universal Prompt Cache & Hit Rate** | ❌ | ❌ | ✅ Tracked across Claude, Codex, Kiro, OpenAI |
+| **Circuit breaker** | ❌ | ✅ TypeScript + DB persistence | ✅ JS, in-memory (no DB dependency) |
+| **Account semaphore** | ❌ | ✅ TypeScript | ✅ JS, ported + proxy-aware |
+| **Provider-level failure tracking** | ❌ | ✅ with 5s dedup | ✅ ported, with dedup bound 10K |
+| **Provider exhaustion detection** | ❌ | ✅ `isProviderExhaustedReason()` | ✅ ported + tightened regex |
+| **429 excluded from breaker** | ❌ N/A | ❌ (429 counts) | ✅ Only 5xx/timeout counts |
+| **Proxy-aware resilience** | ❌ | ❌ | ✅ per-proxy breaker + semaphore + pool routing |
+| **Kimchi CLI alignment** | ❌ | ❌ | ✅ 5 models, per-model caps from models.dev |
+| **Kimchi quota auto-reactivation** | ❌ | ❌ | ✅ monthly auto-reset via instrumentation hook |
+| **AgentRouter provider** | ❌ | ✅ | ✅ |
+| **Model lockout** | ✅ DB flat field | ✅ in-memory Map | ✅ DB flat field (inherited) |
+| **RTK + Caveman + Ponytail** | ✅ | ✅ | ✅ inherited |
+| **NVIDIA Kimi stream coercion** | ✅ | ✅ | ✅ inherited |
+| **Per-API-key ACL** | ✅ fork-only | ❌ | ✅ inherited |
+| **Format translation** | ✅ OpenAI↔Claude↔Gemini↔Kiro | ✅ | ✅ inherited |
+| **Kimi native tool parser** | ✅ | ✅ | ✅ inherited + hardened |
+| **Combo strategies** | 4 (fallback/RR/fusion/capacity) | 17 | 4 (inherited) |
+| **Settings cache (TPS)** | ❌ (3 sync DB reads/req) | ❌ | ✅ 5s TTL cache |
+| **Connections cache (TPS)** | ❌ (1 sync DB read/req) | ❌ | ✅ 2s TTL cache + invalidation |
+| **Per-provider mutex** | ❌ (global mutex) | ❌ | ✅ per-provider parallel selection |
+| **Provider count** | 40+ | 231+ | 40+ + AgentRouter + Antigravity 3.7 |
+
+### What VansRouter has that neither 9Router nor OmniRoute has
+
+1. **Kimchi CLI alignment** — 9router's Kimchi provider masquerades as the official Kimchi CLI, with exactly the same 5 models, capabilities, and temperature rules
+2. **Kimchi quota auto-reactivation** — accounts deactivated due to quota exhaustion automatically reactivate at the 1st of each month
+3. **In-memory circuit breaker without DB** — simpler than OmniRoute's DB-backed version, no `domainState.js` dependency
+4. **Proxy-aware resilience** — circuit breaker and semaphore keyed per `provider:proxyHash` so one dead proxy doesn't block others
+5. **TPS optimization** — cached settings + cached connections + per-provider mutex = fewer sync DB reads per request
+
+### What VansRouter does NOT have (yet)
+
+- OmniRoute's 17 combo strategies (VansRouter has 4)
+- OmniRoute's `sessionPool` with fingerprint rotation
+- OmniRoute's `autoCombo` with complexity routing and task fitness scoring
+- OmniRoute's 231 providers (VansRouter has 40+)
 
 ---
 
@@ -53,7 +99,7 @@
        │ http://localhost:20128/v1
        ↓
 ┌─────────────────────────────────────────────┐
-│           9Router (Smart Router)            │
+│          VansRouter (Smart Router)          │
 │  • RTK Token Saver (cut tool_result tokens) │
 │  • Format translation (OpenAI ↔ Claude)     │
 │  • Quota tracking                           │
@@ -76,15 +122,15 @@ Result: Never stop coding, minimal cost + 20-40% token savings via RTK
 **1. Install globally:**
 
 ```bash
-npm install -g 9router
-9router
+npm install -g vansrouter
+vansrouter
 ```
 
 🎉 Dashboard opens at `http://localhost:20128`
 
 **2. Connect a FREE provider (no signup needed):**
 
-Dashboard → Providers → Connect **Kiro AI** (~50 credits/month free: Claude 4.5 + GLM-5 + MiniMax) or **OpenCode Free** (no auth) → Done!
+Dashboard → Providers → Connect **Kiro AI** (free Claude unlimited) or **OpenCode Free** (no auth) → Done!
 
 **3. Use in your CLI tool:**
 
@@ -127,14 +173,14 @@ Default URLs:
 
 <table>
   <tr>
-    <td align="center" width="320">
-      <a href="https://www.youtube.com/watch?v=X69n5Lm06Yw">
-        <img src="https://img.youtube.com/vi/X69n5Lm06Yw/maxresdefault.jpg" alt="Tiết kiệm chi phí LLM với 9Router" width="300"/>
-      </a><br/>
-      <b>🇻🇳 Tiếng Việt</b><br/>
-      <sub>Tiết kiệm chi phí LLM cho OpenClaw với 9Router<br/>by <a href="https://www.youtube.com/c/M%C3%ACAIblog">Mì AI</a></sub>
-    </td>
-    <td align="center" width="320">
+  <td align="center" width="320">
+  <a href="https://www.youtube.com/watch?v=X69n5Lm06Yw">
+    <img src="https://img.youtube.com/vi/X69n5Lm06Yw/maxresdefault.jpg" alt="Tiết kiệm chi phí LLM với 9Router" width="300"/>
+  </a><br/>
+  <b>🇻🇳 Tiếng Việt</b><br/>
+  <sub>Tiết kiệm chi phí LLM cho OpenClaw với 9Router<br/>by <a href="https://www.youtube.com/c/M%C3%ACAIblog">Mì AI</a></sub>
+</td>
+<td align="center" width="320">
       <a href="https://youtu.be/VQAw612S27Y">
         <img src="https://img.youtube.com/vi/VQAw612S27Y/maxresdefault.jpg" alt="9Router + Claude Code FREE Unlimited Setup" width="300"/>
       </a><br/>
@@ -148,7 +194,10 @@ Default URLs:
       <b>🇺🇸 English</b><br/>
       <sub>9Router + Claude Code FREE Setup<br/>by <a href="https://www.youtube.com/@BuildAIWithHamid">Build AI With Hamid</a></sub>
     </td>
-    <td align="center" width="320">
+    
+  </tr>
+  <tr>
+  <td align="center" width="320">
       <a href="https://youtu.be/3dF5GIYMrcQ?si=bAyfyiHbARJQAHj_">
         <img src="https://img.youtube.com/vi/3dF5GIYMrcQ/hqdefault.jpg" alt="9Router Setup Tutorial" width="300"/>
       </a><br/>
@@ -162,8 +211,6 @@ Default URLs:
       <b>🇺🇸 English</b><br/>
       <sub>Claude Code FREE Forever — Unlimited Models<br/>by <a href="https://www.youtube.com/@BuildAIWithHamid">Build AI With Hamid</a></sub>
     </td>
-  </tr>
-  <tr>
     <td align="center" width="320">
       <a href="https://www.youtube.com/watch?v=Ttpc26m39Dw">
         <img src="https://img.youtube.com/vi/Ttpc26m39Dw/maxresdefault.jpg" alt="Claude CLI Free Setup" width="300"/>
@@ -171,7 +218,10 @@ Default URLs:
       <b>🇺🇸 English</b><br/>
       <sub>Claude CLI Free Setup with 9Router 🚀<br/>by <a href="https://www.youtube.com/@CodeVerseSoban">CodeVerse Soban</a></sub>
     </td>
-    <td align="center" width="320">
+    
+  </tr>
+  <tr>
+  <td align="center" width="320">
       <a href="https://www.youtube.com/watch?v=G-5A_D5Pm6Y">
         <img src="https://img.youtube.com/vi/G-5A_D5Pm6Y/maxresdefault.jpg" alt="Cài đặt OpenClaw Free A-Z" width="300"/>
       </a><br/>
@@ -192,15 +242,17 @@ Default URLs:
       <b>🇮🇩 Indonesia</b><br/>
       <sub>Koding 24 Jam Anti Rate Limit! Hemat Token AI 65% | Tutorial Quick Setup 9Router 🚀<br/>by <a href="https://www.youtube.com/@krisswuh">Krisswuh</a></sub>
     </td>
-    <td align="center" width="320">
+    
+  </tr>
+  
+  <tr>
+  <td align="center" width="320">
       <a href="https://www.youtube.com/watch?v=TXGv4eofe1I">
         <img src="https://img.youtube.com/vi/TXGv4eofe1I/mqdefault.jpg" alt="Cara Deploy 9Router di Hugging Face GRATIS Non-Stop! | Alternatif VPS RAM 16GB" width="300"/>
       </a><br/>
       <b>🇮🇩 Indonesia</b><br/>
       <sub>Cara Deploy 9Router di Hugging Face GRATIS Non-Stop! | Alternatif VPS RAM 16GB<br/>by <a href="https://www.youtube.com/@krisswuh">Krisswuh</a></sub>
     </td>
-  </tr>
-  <tr>
     <td align="center" width="320">
       <a href="https://www.youtube.com/watch?v=GyX-DLvePW8">
         <img src="https://img.youtube.com/vi/GyX-DLvePW8/hqdefault.jpg" alt="این شکلی از هر API ای استفاده کن برای هوش مصنوعی" width="300"/>
@@ -208,17 +260,8 @@ Default URLs:
       <b>🇮🇷 Persian-فارسی</b><br/>
       <sub dir="rtl">این شکلی از هر API ای استفاده کن برای هوش مصنوعی<br/>by <a href="https://www.youtube.com/@Matin_SenPai">Matin SenPai</a></sub>
     </td>
-    <td align="center" width="320">
-      <a href="https://www.youtube.com/watch?v=hPusYX-5Pmw">
-        <img src="https://img.youtube.com/vi/hPusYX-5Pmw/maxresdefault.jpg" alt="Hướng Dẫn Setup OpenClaw + 9Router: Tạo Bot Zalo AI Tự Động Từ A-Z" width="300"/>
-      </a><br/>
-      <b>🇻🇳 Tiếng Việt</b><br/>
-      <sub>Hướng Dẫn Setup OpenClaw + 9Router: Tạo Bot Zalo AI Tự Động Từ A-Z<br/>by <a href="https://github.com/tuanminhhole">tuanminhhole</a></sub>
-    </td>
-    <td align="center" width="320"></td>
-    <td align="center" width="320"></td>
-    <td align="center" width="320"></td>
   </tr>
+
 </table>
 
 </div>
@@ -235,80 +278,54 @@ Default URLs:
   <table>
     <tr>
       <td align="center" width="120">
-        <img src="./public/providers/claude.png" width="60" alt="Claude Code"/><br/>
+        <img src="./public/providers/claude.webp" width="60" alt="Claude Code"/><br/>
         <b>Claude-Code</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/openclaw.png" width="60" alt="OpenClaw"/><br/>
+        <img src="./public/providers/openclaw.webp" width="60" alt="OpenClaw"/><br/>
         <b>OpenClaw</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/codex.png" width="60" alt="Codex"/><br/>
+        <img src="./public/providers/codex.webp" width="60" alt="Codex"/><br/>
         <b>Codex</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/opencode.png" width="60" alt="OpenCode"/><br/>
+        <img src="./public/providers/opencode.webp" width="60" alt="OpenCode"/><br/>
         <b>OpenCode</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/cursor.png" width="60" alt="Cursor"/><br/>
+        <img src="./public/providers/cursor.webp" width="60" alt="Cursor"/><br/>
         <b>Cursor</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/antigravity.png" width="60" alt="Antigravity"/><br/>
+        <img src="./public/providers/antigravity.webp" width="60" alt="Antigravity"/><br/>
         <b>Antigravity</b>
       </td>
     </tr>
     <tr>
       <td align="center" width="120">
-        <img src="./public/providers/cline.png" width="60" alt="Cline"/><br/>
+        <img src="./public/providers/cline.webp" width="60" alt="Cline"/><br/>
         <b>Cline</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/continue.png" width="60" alt="Continue"/><br/>
+        <img src="./public/providers/continue.webp" width="60" alt="Continue"/><br/>
         <b>Continue</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/droid.png" width="60" alt="Droid"/><br/>
+        <img src="./public/providers/droid.webp" width="60" alt="Droid"/><br/>
         <b>Droid</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/roo.png" width="60" alt="Roo"/><br/>
+        <img src="./public/providers/roo.webp" width="60" alt="Roo"/><br/>
         <b>Roo</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/copilot.png" width="60" alt="Copilot"/><br/>
+        <img src="./public/providers/copilot.webp" width="60" alt="Copilot"/><br/>
         <b>Copilot</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/kilocode.png" width="60" alt="Kilo Code"/><br/>
+        <img src="./public/providers/kilocode.webp" width="60" alt="Kilo Code"/><br/>
         <b>Kilo Code</b>
-      </td>
-    </tr>
-    <tr>
-      <td align="center" width="120">
-        <img src="./public/providers/opendesign.png" width="60" alt="OpenDesign"/><br/>
-        <b>OpenDesign</b>
-      </td>
-      <td align="center" width="120">
-        <img src="./public/providers/jcode.png" width="60" alt="jcode"/><br/>
-        <b>jcode</b>
-      </td>
-      <td align="center" width="120">
-        <img src="./public/providers/grok-cli.png" width="60" alt="Grok Build"/><br/>
-        <b>Grok Build</b>
-      </td>
-      <td align="center" width="120">
-        <img src="./public/providers/devin-cli.png" width="60" alt="Devin CLI"/><br/>
-        <b>Devin CLI</b>
-      </td>
-      <td align="center" width="120">
-        <img src="./public/providers/deepseek-tui.png" width="60" alt="DeepSeek TUI"/><br/>
-        <b>DeepSeek TUI</b>
-      </td>
-      <td align="center" width="120">
-        <img src="./public/providers/qwen.png" width="60" alt="Qwen Code"/><br/>
-        <b>Qwen Code</b>
       </td>
     </tr>
   </table>
@@ -324,27 +341,27 @@ Default URLs:
   <table>
     <tr>
       <td align="center" width="120">
-        <img src="./public/providers/claude.png" width="60" alt="Claude Code"/><br/>
+        <img src="./public/providers/claude.webp" width="60" alt="Claude Code"/><br/>
         <b>Claude-Code</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/antigravity.png" width="60" alt="Antigravity"/><br/>
+        <img src="./public/providers/antigravity.webp" width="60" alt="Antigravity"/><br/>
         <b>Antigravity</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/codex.png" width="60" alt="Codex"/><br/>
+        <img src="./public/providers/codex.webp" width="60" alt="Codex"/><br/>
         <b>Codex</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/github.png" width="60" alt="GitHub"/><br/>
+        <img src="./public/providers/github.webp" width="60" alt="GitHub"/><br/>
         <b>GitHub</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/cursor.png" width="60" alt="Cursor"/><br/>
+        <img src="./public/providers/cursor.webp" width="60" alt="Cursor"/><br/>
         <b>Cursor</b>
       </td>
       <td align="center" width="120">
-        <img src="./public/providers/kimchi.png" width="60" alt="Kimchi"/><br/>
+        <img src="./public/providers/kimchi.webp" width="60" alt="Kimchi"/><br/>
         <b>Kimchi</b>
       </td>
     </tr>
@@ -357,17 +374,17 @@ Default URLs:
   <table>
     <tr>
       <td align="center" width="150">
-        <img src="./public/providers/kiro.png" width="70" alt="Kiro"/><br/>
+        <img src="./public/providers/kiro.webp" width="70" alt="Kiro"/><br/>
         <b>Kiro AI</b><br/>
-        <sub>Claude 4.5 + GLM-5 + MiniMax<br/>50 credits/month free</sub>
+        <sub>Claude 4.5 + GLM-5 + MiniMax<br/>Unlimited FREE</sub>
       </td>
       <td align="center" width="150">
-        <img src="./public/providers/opencode.png" width="70" alt="OpenCode Free"/><br/>
+        <img src="./public/providers/opencode.webp" width="70" alt="OpenCode Free"/><br/>
         <b>OpenCode Free</b><br/>
-        <sub>No auth • Auto-fetch models<br/>Free (model list varies)</sub>
+        <sub>No auth • Auto-fetch models<br/>Unlimited FREE</sub>
       </td>
       <td align="center" width="150">
-        <img src="./public/providers/gemini.png" width="70" alt="Vertex AI"/><br/>
+        <img src="./public/providers/gemini.webp" width="70" alt="Vertex AI"/><br/>
         <b>Vertex AI</b><br/>
         <sub>Gemini 3 Pro + GLM-5 + DeepSeek<br/>$300 credits free</sub>
       </td>
@@ -375,11 +392,7 @@ Default URLs:
   </table>
 </div>
 
-> **Note:** iFlow, Qwen Code and Gemini CLI free tiers were discontinued in 2026. Use Kiro / OpenCode Free / Vertex instead.
->
-> **Kiro AI** moved to a paid model in Sep 2025 — the free tier is now capped at **50 credits/month** (plus 500 trial credits for new accounts in the first 30 days). Paid tiers: Pro $20/mo (1,000 credits), Pro+ $40/mo (2,000), Pro Max $100/mo (5,000), Power $200/mo (10,000).
-> **OpenCode Free** model list fluctuates over time (some models free only for limited promos) — subject to change without notice.
-> **Vertex AI**: the $300 free credit for new GCP accounts is still valid, but since Mar 2026 the **Gemini API endpoint no longer consumes these credits** — call the **Vertex AI Studio** endpoint instead.
+> **Note:** iFlow, Qwen and Gemini CLI free tiers were discontinued in 2026. Use Kiro / OpenCode Free / Vertex instead.
 
 ### 🔑 API Key Providers (40+)
 
@@ -387,125 +400,85 @@ Default URLs:
   <table>
     <tr>
       <td align="center" width="100">
-        <img src="./public/providers/openrouter.png" width="50" alt="OpenRouter"/><br/>
+        <img src="./public/providers/openrouter.webp" width="50" alt="OpenRouter"/><br/>
         <sub>OpenRouter</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/glm.png" width="50" alt="GLM"/><br/>
+        <img src="./public/providers/glm.webp" width="50" alt="GLM"/><br/>
         <sub>GLM</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/kimi.png" width="50" alt="Kimi"/><br/>
+        <img src="./public/providers/kimi.webp" width="50" alt="Kimi"/><br/>
         <sub>Kimi</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/minimax.png" width="50" alt="MiniMax"/><br/>
+        <img src="./public/providers/minimax.webp" width="50" alt="MiniMax"/><br/>
         <sub>MiniMax</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/openai.png" width="50" alt="OpenAI"/><br/>
+        <img src="./public/providers/openai.webp" width="50" alt="OpenAI"/><br/>
         <sub>OpenAI</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/anthropic.png" width="50" alt="Anthropic"/><br/>
+        <img src="./public/providers/anthropic.webp" width="50" alt="Anthropic"/><br/>
         <sub>Anthropic</sub>
       </td>
     </tr>
     <tr>
       <td align="center" width="100">
-        <img src="./public/providers/gemini.png" width="50" alt="Gemini"/><br/>
+        <img src="./public/providers/gemini.webp" width="50" alt="Gemini"/><br/>
         <sub>Gemini</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/deepseek.png" width="50" alt="DeepSeek"/><br/>
+        <img src="./public/providers/deepseek.webp" width="50" alt="DeepSeek"/><br/>
         <sub>DeepSeek</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/groq.png" width="50" alt="Groq"/><br/>
+        <img src="./public/providers/groq.webp" width="50" alt="Groq"/><br/>
         <sub>Groq</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/xai.png" width="50" alt="xAI"/><br/>
+        <img src="./public/providers/xai.webp" width="50" alt="xAI"/><br/>
         <sub>xAI</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/mistral.png" width="50" alt="Mistral"/><br/>
+        <img src="./public/providers/mistral.webp" width="50" alt="Mistral"/><br/>
         <sub>Mistral</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/perplexity.png" width="50" alt="Perplexity"/><br/>
+        <img src="./public/providers/perplexity.webp" width="50" alt="Perplexity"/><br/>
         <sub>Perplexity</sub>
       </td>
     </tr>
     <tr>
       <td align="center" width="100">
-        <img src="./public/providers/together.png" width="50" alt="Together"/><br/>
+        <img src="./public/providers/together.webp" width="50" alt="Together"/><br/>
         <sub>Together AI</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/fireworks.png" width="50" alt="Fireworks"/><br/>
+        <img src="./public/providers/fireworks.webp" width="50" alt="Fireworks"/><br/>
         <sub>Fireworks</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/cerebras.png" width="50" alt="Cerebras"/><br/>
+        <img src="./public/providers/cerebras.webp" width="50" alt="Cerebras"/><br/>
         <sub>Cerebras</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/cohere.png" width="50" alt="Cohere"/><br/>
+        <img src="./public/providers/cohere.webp" width="50" alt="Cohere"/><br/>
         <sub>Cohere</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/nvidia.png" width="50" alt="NVIDIA"/><br/>
+        <img src="./public/providers/nvidia.webp" width="50" alt="NVIDIA"/><br/>
         <sub>NVIDIA</sub>
       </td>
       <td align="center" width="100">
-        <img src="./public/providers/siliconflow.png" width="50" alt="SiliconFlow"/><br/>
+        <img src="./public/providers/siliconflow.webp" width="50" alt="SiliconFlow"/><br/>
         <sub>SiliconFlow</sub>
       </td>
     </tr>
   </table>
   <p><i>...and 20+ more providers including Nebius, Chutes, Hyperbolic, and custom OpenAI/Anthropic compatible endpoints</i></p>
 </div>
-
-### 🏠 Self-hosted Providers
-
-For speech and embeddings served from **your own** machine — whisper.cpp,
-faster-whisper, Speaches, Kokoro-FastAPI, openedai-speech, llama.cpp/llama-server,
-vLLM, Infinity, text-embeddings-inference, or anything else that speaks the OpenAI
-shape.
-
-| Provider | Endpoint used | Typical server |
-| --- | --- | --- |
-| **Self-hosted STT** | `/v1/audio/transcriptions` | whisper.cpp, faster-whisper |
-| **Self-hosted TTS** | `/v1/audio/speech` | Kokoro-FastAPI, openedai-speech |
-| **Self-hosted Embedding** | `/v1/embeddings` | llama-server, vLLM, Infinity |
-
-Every other speech provider is a named cloud service with a fixed endpoint. These
-three read their address from **each connection**, so one provider can front
-several machines and load-balance across them like any other.
-
-Set it on the connection as `providerSpecificData.baseUrl`:
-
-| Provider | Give it | Result |
-| --- | --- | --- |
-| Self-hosted STT | the full URL — `http://host:8080/v1/audio/transcriptions` | used as-is |
-| Self-hosted TTS | the server root — `http://host:8880` | `+ /v1/audio/speech` |
-| Self-hosted Embedding | the **OpenAI base**, `/v1` included — `http://host:8080/v1` | `+ /embeddings` |
-
-> **Mind the `/v1` on embeddings.** The adapter appends `/embeddings`, so
-> `http://host:8080` resolves to `http://host:8080/embeddings` and misses the
-> OpenAI route — llama-server answers **501**. Give it the same base URL an OpenAI
-> client would use. A full `.../v1/embeddings` is also accepted, so a value pasted
-> from a `curl` example works too.
-
-The API key is not checked by most local servers, but the field must be non-empty:
-it is what gives the connection a credentials record, and `baseUrl` lives there.
-Any placeholder works.
-
-Self-hosted Embedding has **no cloud fallback by design** — a connection saved
-without a `baseUrl` is reported as a configuration error rather than quietly
-falling back to `api.openai.com`, which would send your input text and API key to
-a third party under a provider named "Self-hosted".
 
 ---
 
@@ -673,8 +646,8 @@ Seamless translation between formats:
 > The "cost" displayed in Usage Analytics is **for tracking and comparison purposes only**.
 > 9Router itself **never charges** you anything. You only pay providers directly (if using paid services).
 >
-> **Example:** If your dashboard shows "$290 total cost" while using Kiro free models, this represents
-> what you would have paid using paid APIs directly. Your actual cost = **$0** (Kiro free tier: ~50 credits/mo).
+> **Example:** If your dashboard shows "$290 total cost" while using iFlow models, this represents
+> what you would have paid using paid APIs directly. Your actual cost = **$0** (iFlow is free unlimited).
 >
 > Think of it as a "savings tracker" showing how much you're saving by using free models or
 > routing through 9Router!
@@ -702,9 +675,9 @@ Seamless translation between formats:
 | **💰 CHEAP**        | GLM-5.1 / GLM-4.7     | $0.6/1M      | Daily 10AM       | Budget backup                           |
 |                     | MiniMax M2.7          | $0.2/1M      | 5-hour rolling   | Cheapest option                         |
 |                     | Kimi K2.5             | $9/mo flat   | 10M tokens/mo    | Predictable cost                        |
- | **🆓 FREE**         | Kiro AI               | $0           | 50 credits/mo    | Claude 4.5 + GLM-5 + MiniMax free (paid tiers above) |
- |                     | OpenCode Free         | $0           | Varies*          | No auth, auto-fetch models (list changes over time) |
- |                     | Vertex AI             | $300 credits | New GCP accounts | Gemini 3 Pro + DeepSeek + GLM-5 (use Vertex AI Studio endpoint for free credits) |
+| **🆓 FREE**         | Kiro AI               | $0           | Unlimited        | Claude 4.5 + GLM-5 + MiniMax free       |
+|                     | OpenCode Free         | $0           | Unlimited        | No auth, auto-fetch models              |
+|                     | Vertex AI             | $300 credits | New GCP accounts | Gemini 3 Pro + DeepSeek + GLM-5         |
 
 **💡 Pro Tip:** RTK + Kiro AI + OpenCode Free combo = **$0 cost + 20-40% token savings**!
 
@@ -717,7 +690,7 @@ Seamless translation between formats:
 ✅ **9Router software = FREE forever** (open source, never charges)  
 ✅ **Dashboard "costs" = Display/tracking only** (not actual bills)  
 ✅ **You pay providers directly** (subscriptions or API fees)  
-✅ **FREE providers stay FREE** (Kiro ~50 credits/mo, OpenCode Free, Vertex $300 credits = $0 within free-tier limits) — note iFlow/Qwen/Gemini CLI free tiers were discontinued in 2026
+✅ **FREE providers stay FREE** (iFlow, Kiro, Qwen = $0 unlimited)  
 ❌ **9Router never sends invoices** or charges your card
 
 **How Cost Display Works:**
@@ -733,7 +706,7 @@ Dashboard Display:
 • Display Cost: $290
 
 Reality Check:
-• Provider: Kiro (free tier: ~50 credits/mo)
+• Provider: iFlow (FREE unlimited)
 • Actual Payment: $0.00
 • What $290 Means: Amount you SAVED by using free models!
 ```
@@ -773,7 +746,7 @@ vs. $20 + hitting limits = frustration
 
 ```
 Combo: "free-forever"
-  1. kr/claude-sonnet-4.5      (Claude 4.5 free via Kiro, ~50 credits/mo)
+  1. kr/claude-sonnet-4.5      (Claude 4.5 free unlimited)
   2. kr/glm-5                  (GLM-5 free via Kiro)
   3. oc/<auto>                 (OpenCode Free, no auth)
 
@@ -793,7 +766,7 @@ Combo: "always-on"
   2. cx/gpt-5.5                (second subscription)
   3. glm/glm-5.1               (cheap, resets daily)
   4. minimax/MiniMax-M2.7      (cheapest, 5h reset)
-  5. kr/claude-sonnet-4.5      (free via Kiro, ~50 credits/mo)
+  5. kr/claude-sonnet-4.5      (free unlimited)
 
 Result: 5 layers of fallback = zero downtime
 Monthly cost: $20-200 (subscriptions) + $10-20 (backup)
@@ -827,7 +800,7 @@ The dashboard tracks your token usage and displays **estimated costs** as if you
 **Example:**
 
 - **Dashboard shows:** "$290 total cost"
-- **Reality:** You're using Kiro free models (~50 credits/mo)
+- **Reality:** You're using iFlow (FREE unlimited)
 - **Your actual cost:** **$0.00**
 - **What $290 means:** Amount you **saved** by using free models instead of paid APIs!
 
@@ -853,21 +826,21 @@ The cost display is a "savings tracker" to help you understand your usage patter
 <details>
 <summary><b>🆓 Are FREE providers really unlimited?</b></summary>
 
-**Mostly!** The current FREE providers (Kiro, OpenCode Free, Vertex) are genuinely free, but free tiers have limits:
+**Yes!** The current FREE providers (Kiro, OpenCode Free, Vertex) are genuinely free with **no hidden charges**.
 
 These are free services offered by those respective companies:
 
-- **Kiro AI**: ~50 credits/month free (plus 500 trial credits for new accounts in the first 30 days) via AWS Builder ID / Google / GitHub OAuth. Paid tiers available above that.
-- **OpenCode Free**: No-auth passthrough proxy, models auto-fetched from `opencode.ai/zen/v1/models`. The free model list fluctuates over time (some models free only for limited promos) — subject to change without notice.
-- **Vertex AI**: $300 free credits for new Google Cloud accounts (90 days). Since Mar 2026 the Gemini API endpoint no longer consumes these credits — use the **Vertex AI Studio** endpoint instead.
+- **Kiro AI**: Free unlimited Claude 4.5 + GLM-5 + MiniMax via AWS Builder ID / Google / GitHub OAuth
+- **OpenCode Free**: No-auth passthrough proxy, models auto-fetched from `opencode.ai/zen/v1/models`
+- **Vertex AI**: $300 free credits for new Google Cloud accounts (90 days)
 
-9Router just routes your requests to them - there's no "catch" or future billing from 9Router itself. They're truly free services, and 9Router makes them easy to use with fallback support.
+9Router just routes your requests to them - there's no "catch" or future billing. They're truly free services, and 9Router makes them easy to use with fallback support.
 
 **Discontinued free tiers (no longer recommended):**
 
 - ❌ **iFlow**: Was free unlimited, now changed to paid (2026)
-- ❌ **Qwen Code**: Free OAuth tier fully discontinued by Alibaba on 2026-04-15
-- ❌ **Gemini CLI**: Service fully shut down by Google on 2026-06-18 (replaced by the closed-source Antigravity CLI). Discontinued — do not use.
+- ❌ **Qwen Code**: Free OAuth tier discontinued by Alibaba on 2026-04-15
+- ❌ **Gemini CLI**: Still works, but using it with non-CLI tools (Claude, Codex, Cursor...) may result in account bans — only use if you stick to Gemini CLI itself
 
 </details>
 
@@ -879,12 +852,12 @@ These are free services offered by those respective companies:
 1. **Start with 100% free combo:**
 
    ```
-   1. kr/glm-5 (GLM-5 free via Kiro, ~50 credits/mo)
-   2. OpenCode Free models (no auth, auto-fetched)
-   3. Vertex AI Gemini 3 Pro (using the Vertex AI Studio endpoint with $300 credits)
+   1. gc/gemini-3-flash (180K/month free from Google)
+   2. if/kimi-k2-thinking (unlimited free from iFlow)
+   3. qw/qwen3-coder-plus (unlimited free from Qwen)
    ```
 
-   **Cost: $0/month** (within Kiro's free credit cap; OpenCode/Vertex subject to their free-tier limits)
+   **Cost: $0/month**
 
 2. **Add cheap backup** only if you need it:
 
@@ -994,7 +967,7 @@ Models:
 <details>
 <summary><b>💰 Cheap Providers (Backup)</b></summary>
 
-### GLM-5.1 / GLM-4.7 (Daily reset, $0.6/1M)
+### GLM-5.3 / GLM-5.1 / GLM-4.7 (Daily reset, $0.6/1M)
 
 1. Sign up: [Zhipu AI](https://open.bigmodel.cn/)
 2. Get API key from Coding Plan
@@ -1002,9 +975,9 @@ Models:
    - Provider: `glm`
    - API Key: `your-key`
 
-**Use:** `glm/glm-5.1`, `glm/glm-5`, `glm/glm-4.7`
+**Use:** `glm/glm-5.3`, `glm/glm-5.1`, `glm/glm-5`, `glm/glm-4.7`
 
-**Pro Tip:** Coding Plan offers 3× quota at 1/7 cost! Reset daily 10:00 AM.
+**Pro Tip:** Coding Plan offers 3× quota at 1/7 cost! Reset daily 10:00 AM. Supports GLM-5.3 with coding-optimized benchmarks.
 
 ### MiniMax M2.7 (5h reset, $0.20/1M)
 
@@ -1048,6 +1021,27 @@ Models:
 ```
 
 **Pro Tip:** Best free option for Claude. No API key, no payment, fully unlimited.
+
+### Antigravity (Google Cloud Code / Gemini 3.7 & Claude)
+
+```bash
+Dashboard → Connect Antigravity
+→ Google OAuth Login
+→ Access to tiered reasoning models with automatic quota failover
+
+Models:
+  ag/gemini-3.7-flash-high
+  ag/gemini-3.7-flash-medium
+  ag/gemini-3.7-flash-low
+  ag/gemini-3.6-flash-high
+  ag/gemini-3.6-flash-medium
+  ag/gemini-3.6-flash-low
+  ag/claude-sonnet-4-6
+  ag/claude-opus-4-6-thinking
+  ag/gpt-oss-120b-medium
+```
+
+**Pro Tip:** Full Gemini 3.7 Flash support with High/Medium/Low reasoning effort tiers, competitive trigger stripping, and direct proxy routing.
 
 ### OpenCode Free (No auth, auto-fetch models)
 
@@ -1109,7 +1103,7 @@ Monthly cost example (100M tokens):
 ```
 Name: free-combo
 Models:
-  1. kr/claude-sonnet-4.5 (Claude 4.5 free via Kiro, ~50 credits/mo)
+  1. kr/claude-sonnet-4.5 (Claude 4.5 free unlimited)
   2. kr/glm-5 (GLM-5 free via Kiro)
   3. vertex/gemini-3.1-pro-preview ($300 free credits)
 
@@ -1209,8 +1203,8 @@ Model: cc/claude-opus-4-7
 
 ```bash
 # Clone and install
-git clone https://github.com/decolua/9router.git
-cd 9router
+git clone https://github.com/Vanszs/VansRouter.git
+cd VansRouter
 npm install
 npm run build
 
@@ -1231,7 +1225,7 @@ npm run start
 
 # Or use PM2
 npm install -g pm2
-pm2 start npm --name 9router -- start
+pm2 start npm --name vansrouter -- start
 pm2 save
 pm2 startup
 ```
@@ -1240,18 +1234,18 @@ pm2 startup
 
 Published images (multi-platform `linux/amd64` + `linux/arm64`):
 
-- Docker Hub: [`decolua/9router`](https://hub.docker.com/r/decolua/9router)
-- GHCR: [`ghcr.io/decolua/9router`](https://github.com/decolua/9router/pkgs/container/9router)
+- Docker Hub: [`vanszs/vansrouter`](https://hub.docker.com/r/vanszs/vansrouter)
+- GHCR: [`ghcr.io/vanszs/vansrouter`](https://github.com/Vanszs/VansRouter/pkgs/container/vansrouter)
 
 **Quick start (use published image):**
 
 ```bash
 docker run -d \
-  --name 9router \
+  --name vansrouter \
   -p 20128:20128 \
   -v "$HOME/.9router:/app/data" \
   -e DATA_DIR=/app/data \
-  decolua/9router:latest
+  ghcr.io/vanszs/vansrouter:latest
 ```
 
 → Open http://localhost:20128
@@ -1259,11 +1253,11 @@ docker run -d \
 **Build from source (dev):**
 
 ```bash
-git clone https://github.com/decolua/9router.git
-cd 9router/app
-docker build -t 9router .
-docker run -d --name 9router -p 20128:20128 \
-  -v "$HOME/.9router:/app/data" -e DATA_DIR=/app/data 9router
+git clone https://github.com/Vanszs/VansRouter.git
+cd VansRouter/app
+docker build -t vansrouter .
+docker run -d --name vansrouter -p 20128:20128 \
+  -v "$HOME/.9router:/app/data" -e DATA_DIR=/app/data vansrouter
 ```
 
 **Container defaults:**
@@ -1274,10 +1268,10 @@ docker run -d --name 9router -p 20128:20128 \
 **Useful commands:**
 
 ```bash
-docker logs -f 9router
-docker restart 9router
-docker stop 9router && docker rm 9router
-docker pull decolua/9router:latest   # update to latest
+docker logs -f vansrouter
+docker restart vansrouter
+docker stop vansrouter && docker rm vansrouter
+docker pull ghcr.io/vanszs/vansrouter:latest   # update to latest
 ```
 
 **Data persistence:** `$HOME/.9router/db/data.sqlite` on host ↔ `/app/data/db/data.sqlite` in container.
@@ -1374,7 +1368,7 @@ Notes:
 - `kimi/kimi-k2.5`
 - `kimi/kimi-k2.5-thinking`
 
-**Kiro (`kr/`)** - Free (~50 credits/month, paid tiers above):
+**Kiro (`kr/`)** - FREE unlimited:
 
 - `kr/claude-sonnet-4.5`
 - `kr/claude-haiku-4.5`
@@ -1479,22 +1473,22 @@ Authorization: Bearer your-api-key
 ## 📧 Support
 
 - **Website**: [9router.com](https://9router.com)
-- **GitHub**: [github.com/decolua/9router](https://github.com/decolua/9router)
-- **Issues**: [github.com/decolua/9router/issues](https://github.com/decolua/9router/issues)
+- **GitHub**: [github.com/Vanszs/VansRouter](https://github.com/Vanszs/VansRouter)
+- **Issues**: [github.com/Vanszs/VansRouter/issues](https://github.com/Vanszs/VansRouter/issues)
 
 ---
 
 ## 👥 Contributors
 
-Thanks to all contributors who helped make 9Router better!
+Thanks to all contributors who helped make VansRouter better!
 
-[![Contributors](https://contrib.rocks/image?repo=decolua/9router&max=150&columns=15&anon=1&v=20260309)](https://github.com/decolua/9router/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=Vanszs/VansRouter&max=150&columns=15&anon=1&v=20260309)](https://github.com/Vanszs/VansRouter/graphs/contributors)
 
 ---
 
 ## 📊 Star Chart
 
-[![Star Chart](https://starchart.cc/decolua/9router.svg?variant=adaptive)](https://starchart.cc/decolua/9router)
+[![Star Chart](https://starchart.cc/Vanszs/VansRouter.svg?variant=adaptive)](https://github.com/Vanszs/VansRouter)
 
 ## 🔀 Forks
 

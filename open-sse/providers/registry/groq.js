@@ -17,14 +17,6 @@ export default {
   transport: {
     baseUrl: "https://api.groq.com/openai/v1/chat/completions",
     validateUrl: "https://api.groq.com/openai/v1/models",
-    // No dedicated quota endpoint. x-ratelimit-* headers ride on inference
-    // responses only — GET /models returns none — so the usage probe is a
-    // minimal completion (max_tokens: 1) against `url`, and `modelsUrl` is
-    // used to pick a chat-capable model for it. See services/usage/groq.js.
-    usage: {
-      url: "https://api.groq.com/openai/v1/chat/completions",
-      modelsUrl: "https://api.groq.com/openai/v1/models",
-    },
   },
   models: [
     { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B" },
@@ -41,9 +33,5 @@ export default {
     authType: "apikey",
     authHeader: "bearer",
     format: "openai",
-  },
-  features: {
-    usage: true,
-    usageApikey: true,
   },
 };

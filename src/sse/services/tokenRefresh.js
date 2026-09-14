@@ -11,6 +11,7 @@ import {
   refreshAccessToken as _refreshAccessToken,
   refreshClaudeOAuthToken as _refreshClaudeOAuthToken,
   refreshGoogleToken as _refreshGoogleToken,
+  refreshQwenToken as _refreshQwenToken,
   refreshCodexToken as _refreshCodexToken,
   refreshIflowToken as _refreshIflowToken,
   refreshGitHubToken as _refreshGitHubToken,
@@ -27,47 +28,50 @@ import {
   shouldRefreshCredentials as _shouldRefreshCredentials,
 } from "open-sse/services/oauthCredentialManager.js";
 
-export const TOKEN_EXPIRY_BUFFER_MS = BUFFER_MS;
+const TOKEN_EXPIRY_BUFFER_MS = BUFFER_MS;
 
 // ─── Re-exports wrapped with local logger ─────────────────────────────────────
 
-export const refreshAccessToken = (provider, refreshToken, credentials) =>
+const refreshAccessToken = (provider, refreshToken, credentials) =>
   _refreshAccessToken(provider, refreshToken, credentials, log);
 
-export const refreshClaudeOAuthToken = (refreshToken) =>
+const refreshClaudeOAuthToken = (refreshToken) =>
   _refreshClaudeOAuthToken(refreshToken, log);
 
 export const refreshGoogleToken = (refreshToken, clientId, clientSecret) =>
   _refreshGoogleToken(refreshToken, clientId, clientSecret, log);
 
+const refreshQwenToken = (refreshToken) =>
+  _refreshQwenToken(refreshToken, log);
+
 export const refreshCodexToken = (refreshToken) =>
   _refreshCodexToken(refreshToken, log);
 
-export const refreshIflowToken = (refreshToken) =>
+const refreshIflowToken = (refreshToken) =>
   _refreshIflowToken(refreshToken, log);
 
-export const refreshGitHubToken = (refreshToken) =>
+const refreshGitHubToken = (refreshToken) =>
   _refreshGitHubToken(refreshToken, log);
 
-export const refreshCopilotToken = (githubAccessToken) =>
+const refreshCopilotToken = (githubAccessToken) =>
   _refreshCopilotToken(githubAccessToken, log);
 
-export const refreshKiroToken = (refreshToken, providerSpecificData) =>
+const refreshKiroToken = (refreshToken, providerSpecificData) =>
   _refreshKiroToken(refreshToken, providerSpecificData, log);
 
-export const getAccessToken = (provider, credentials) =>
+const getAccessToken = (provider, credentials) =>
   _getAccessToken(provider, credentials, log);
 
-export const refreshTokenByProvider = (provider, credentials) =>
+const refreshTokenByProvider = (provider, credentials) =>
   _refreshTokenByProvider(provider, credentials, log);
 
-export const formatProviderCredentials = (provider, credentials) =>
+const formatProviderCredentials = (provider, credentials) =>
   _formatProviderCredentials(provider, credentials, log);
 
-export const getAllAccessTokens = (userInfo) =>
+const getAllAccessTokens = (userInfo) =>
   _getAllAccessTokens(userInfo, log);
 
-export const shouldRefreshCredentials = (provider, credentials) =>
+const shouldRefreshCredentials = (provider, credentials) =>
   _shouldRefreshCredentials(provider, credentials);
 
 // ─── Lifecycle hook ───────────────────────────────────────────────────────────
@@ -79,7 +83,7 @@ export const shouldRefreshCredentials = (provider, credentials) =>
  *
  * @param {string} connectionId
  */
-export function releaseConnection(connectionId) {
+function releaseConnection(connectionId) {
   if (!connectionId) return;
   removeConnection(connectionId);
   log.debug("TOKEN_REFRESH", "Released connection resources", { connectionId });
@@ -121,33 +125,30 @@ function needsProjectId(provider) {
  * @param {string} connectionId
  * @param {string} accessToken
  */
-function _refreshProjectId(provider, connectionId, accessToken) {
-  if (!needsProjectId(provider) || !connectionId || !accessToken) return;
+function _refreshProjectId(provider, creds, accessToken) {
+  if (!needsProjectId(provider) || !creds || !creds.connectionId || !accessToken) return;
+  if (creds.isProjectIdManual) return; // Skip if project ID is manually configured
 
-  // Invalidate the stale cached entry so getProjectIdForConnection does a real fetch
+  const connectionId = creds.connectionId;
+  // Evict the stale cached entry so getProjectIdForConnection does a real fetch
   invalidateProjectId(connectionId);
 
-  // Lazy resolution: Do not eagerly trigger onboardUser during background token refresh.
-  // Eagerly fetching projectId across multiple accounts simultaneously triggers Google Cloud anti-abuse / rate limits.
-  // Runtime handlers (e.g. chat handler) will lazily call getProjectIdForConnection() on demand.
-  if (process.env.EAGER_PROJECT_ID_REFRESH === "true") {
-    getProjectIdForConnection(connectionId, accessToken, provider)
-      .then((projectId) => {
-        if (!projectId) return;
-        updateProviderCredentials(connectionId, { projectId }).catch((err) => {
-          log.debug("TOKEN_REFRESH", "Failed to persist refreshed projectId", {
-            connectionId,
-            error: err?.message ?? err,
-          });
-        });
-      })
-      .catch((err) => {
-        log.debug("TOKEN_REFRESH", "Failed to fetch projectId after token refresh", {
+  getProjectIdForConnection(connectionId, accessToken, provider)
+    .then((projectId) => {
+      if (!projectId) return;
+      updateProviderCredentials(connectionId, { projectId }).catch((err) => {
+        log.debug("TOKEN_REFRESH", "Failed to persist refreshed projectId", {
           connectionId,
           error: err?.message ?? err,
         });
       });
-  }
+    })
+    .catch((err) => {
+      log.debug("TOKEN_REFRESH", "Failed to fetch projectId after token refresh", {
+        connectionId,
+        error: err?.message ?? err,
+      });
+    });
 }
 
 // ─── Local-specific: persist credentials to localDb ──────────────────────────
@@ -158,11 +159,9 @@ function _refreshProjectId(provider, connectionId, accessToken) {
  *
  * @param {string} connectionId
  * @param {object} newCredentials
- * @param {{ quiet?: boolean }} [options]  quiet=true logs at debug level
- *   (used by the background scheduler to avoid flooding the console log).
  * @returns {Promise<boolean>}
  */
-export async function updateProviderCredentials(connectionId, newCredentials, options = {}) {
+export async function updateProviderCredentials(connectionId, newCredentials) {
   try {
     const updates = {};
 
@@ -197,17 +196,10 @@ export async function updateProviderCredentials(connectionId, newCredentials, op
     if (newCredentials.projectId)            updates.projectId = newCredentials.projectId;
 
     const result = await updateProviderConnection(connectionId, updates);
-    if (options.quiet) {
-      log.debug("TOKEN_REFRESH", "Credentials updated in localDb", {
-        connectionId,
-        success: !!result
-      });
-    } else {
-      log.info("TOKEN_REFRESH", "Credentials updated in localDb", {
-        connectionId,
-        success: !!result
-      });
-    }
+    log.info("TOKEN_REFRESH", "Credentials updated in localDb", {
+      connectionId,
+      success: !!result
+    });
     return !!result;
   } catch (error) {
     log.error("TOKEN_REFRESH", "Error updating credentials in localDb", {
@@ -226,43 +218,26 @@ export async function updateProviderCredentials(connectionId, newCredentials, op
  *
  * @param {string} provider
  * @param {object} credentials
- * @param {{ force?: boolean }} [options]  force=true skips the on-request lead check
- *   (used by background scheduler which applies a larger lead). Request path omits this.
  * @returns {Promise<object>} updated credentials object
  */
-export async function checkAndRefreshToken(provider, credentials, options = {}) {
+export async function checkAndRefreshToken(provider, credentials) {
   let creds = { ...credentials };
   if (!creds.connectionId && creds.id) {
     creds.connectionId = creds.id;
   }
 
-  const force = options?.force === true;
-  // Background scheduler passes quiet=true: many OAuth accounts refresh every
-  // tick, and info-level per-account lines would flood the console-log buffer
-  // (~200+ lines/hour). Request-path refreshes stay info-visible.
-  const quiet = options?.quiet === true;
-
   // ── 1. Regular access-token expiry ────────────────────────────────────────
-  if (force || _shouldRefreshCredentials(provider, creds)) {
+  if (_shouldRefreshCredentials(provider, creds)) {
     const expiresAt = creds.expiresAt ? new Date(creds.expiresAt).getTime() : null;
     const remaining = expiresAt ? expiresAt - Date.now() : null;
     const refreshLead = _getRefreshLeadMs(provider);
 
-    if (quiet) {
-      log.debug("TOKEN_REFRESH", "Refreshing provider credentials proactively", {
-        provider,
-        expiresIn: remaining === null ? null : Math.round(remaining / 1000),
-        refreshLeadMs: refreshLead,
-        lastRefreshAt: creds.lastRefreshAt || null,
-      });
-    } else {
-      log.info("TOKEN_REFRESH", "Refreshing provider credentials proactively", {
-        provider,
-        expiresIn: remaining === null ? null : Math.round(remaining / 1000),
-        refreshLeadMs: refreshLead,
-        lastRefreshAt: creds.lastRefreshAt || null,
-      });
-    }
+    log.info("TOKEN_REFRESH", "Refreshing provider credentials proactively", {
+      provider,
+      expiresIn: remaining === null ? null : Math.round(remaining / 1000),
+      refreshLeadMs: refreshLead,
+      lastRefreshAt: creds.lastRefreshAt || null,
+    });
 
     const newCreds = await _refreshProviderCredentials(provider, creds, log);
     if (newCreds?.accessToken || newCreds?.apiKey || newCreds?.copilotToken) {
@@ -272,7 +247,7 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
       };
 
       // Persist to DB (non-blocking path continues below)
-      await updateProviderCredentials(creds.connectionId, mergedCreds, { quiet });
+      await updateProviderCredentials(creds.connectionId, mergedCreds);
 
       creds = {
         ...creds,
@@ -286,7 +261,7 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
       };
 
       // Non-blocking: refresh projectId with the new access token
-      _refreshProjectId(provider, creds.connectionId, creds.accessToken);
+      _refreshProjectId(provider, creds, creds.accessToken);
     }
   }
 
@@ -315,7 +290,7 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
 
         await updateProviderCredentials(creds.connectionId, {
           providerSpecificData: updatedSpecific,
-        }, { quiet });
+        });
 
         creds.providerSpecificData = updatedSpecific;
         creds.copilotToken = copilotTokenResult.token;
@@ -335,7 +310,7 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
  * @param {object} credentials  – must contain `refreshToken`
  * @returns {Promise<object|null>} merged credentials or the raw GitHub credentials on Copilot failure
  */
-export async function refreshGitHubAndCopilotTokens(credentials) {
+async function refreshGitHubAndCopilotTokens(credentials) {
   const newGitHubCreds = await refreshGitHubToken(credentials.refreshToken);
   if (!newGitHubCreds?.accessToken) return newGitHubCreds;
 

@@ -15,10 +15,22 @@ vi.mock("../../src/sse/services/auth.js", () => ({
   clearAccountError: vi.fn(),
   extractApiKey: () => "client-key",
   isValidApiKey: vi.fn(),
+  isProviderAllowed: vi.fn().mockResolvedValue(true),
+  isKindAllowed: vi.fn().mockReturnValue(true),
+  isTrustedInternalRequest: vi.fn().mockResolvedValue(false),
 }));
 vi.mock("@/lib/localDb", () => ({ getSettings: async () => ({ requireApiKey: false }) }));
 vi.mock("../../src/sse/services/model.js", () => ({
   getModelInfo: async () => ({ provider: "openai", model: "text-embedding-3-small" }),
+}));
+vi.mock("../../src/sse/services/allowedModels.js", () => ({
+  isModelAllowed: vi.fn().mockResolvedValue(true),
+}));
+vi.mock("../../open-sse/services/accountFallback.js", () => ({
+  isProviderFullyBlocked: vi.fn().mockReturnValue(false),
+  getProviderShortestCooldownMs: vi.fn(),
+  isProviderInCooldown: vi.fn().mockReturnValue(false),
+  recordProviderFailure: vi.fn(),
 }));
 vi.mock("../../open-sse/handlers/embeddingsCore.js", () => ({
   handleEmbeddingsCore: mocks.handleEmbeddingsCore,
@@ -34,6 +46,7 @@ vi.mock("../../src/sse/services/tokenRefresh.js", () => ({
   updateProviderCredentials: vi.fn(),
   checkAndRefreshToken: async (_provider, credentials) => credentials,
 }));
+vi.mock("@/lib/network/connectionProxy", () => ({ getProxyHash: vi.fn(() => "proxy") }));
 vi.mock("@/lib/usageDb.js", () => ({ saveRequestUsage: mocks.saveRequestUsage }));
 
 import { handleEmbeddings } from "../../src/sse/handlers/embeddings.js";

@@ -7,3 +7,12 @@
 !README.md
 !LICENSE
 
+!app/_nm/@swc/helpers/_
+!app/_nm/@swc/helpers/_/**
+!app/_nm/@swc/helpers/cjs
+!app/_nm/@swc/helpers/cjs/**
+
+# sql.js needs its WebAssembly binary for the offline fallback.
+!app/_nm/sql.js/
+!app/_nm/sql.js/**
+

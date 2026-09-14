@@ -6,7 +6,7 @@ import { buildTtsProviderModels } from "../config/ttsModels.js";
 
 // oauth block is canonical for these fields; inject into transport so executors reading
 // this.config.{clientId,clientSecret,tokenUrl} keep working without duplicating in transport
-const OAUTH_INJECT_FIELDS = ["clientId", "clientSecret", "tokenUrl"];
+const OAUTH_INJECT_FIELDS = ["clientId", "clientSecret", "tokenUrl", "refreshUrl"];
 
 // transport: re-apply shared default (format:"openai") + inject oauth-canonical fields
 function buildTransport(transport, oauth) {
@@ -35,9 +35,6 @@ for (const entry of REGISTRY) {
   if (entry.transport) {
     PROVIDERS[entry.id] = buildTransport(entry.transport, entry.oauth);
     if (entry.transports) PROVIDERS[entry.id].transports = entry.transports;
-    // Top-level registry config that executors read off the built table (not
-    // part of the transport contract): request pacing.
-    if (entry.pacing) PROVIDERS[entry.id].pacing = entry.pacing;
   }
   if (entry.models !== undefined) PROVIDER_MODELS[entry.alias || entry.id] = entry.models.map(normalizeModel);
   if (entry.oauth) PROVIDER_OAUTH[entry.id] = entry.oauth;

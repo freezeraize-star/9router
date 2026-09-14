@@ -41,8 +41,8 @@ describe("Gemini 3.8 Antigravity tiers", () => {
         { projectId: "project", connectionId: "connection" }
       );
 
-      expect(upstreamModel).toBe(`gemini-3.8-flash-${tier}(${tier})`);
-      expect(finalBody.model).toBe(`gemini-3.8-flash-${tier}`);
+      expect(upstreamModel).toBe(`gemini-3.8-flash-tiered(${tier})`);
+      expect(finalBody.model).toBe("gemini-3.8-flash-tiered");
       expect(finalBody.request.generationConfig.thinkingConfig).toEqual({
         thinkingLevel: tier,
         includeThoughts: true,
@@ -86,7 +86,7 @@ describe("Gemini 3.8 MITM tools and catalog", () => {
   it("exposes the direct Gemini 3.8 API models and pricing", () => {
     const ids = gemini.models.map((model) => model.id);
     expect(ids).toContain("gemini-3.8-flash");
-    expect(MODEL_PRICING["gemini-3.8-flash"]).toMatchObject({ input: 1.5, output: 7.5 });
+    expect(MODEL_PRICING["gemini-3.8-flash"]).toMatchObject({ input: 0.75, output: 3.75, cached: 0.1875 });
   });
 
   it("keeps the standalone CLI Antigravity catalog synchronized", () => {

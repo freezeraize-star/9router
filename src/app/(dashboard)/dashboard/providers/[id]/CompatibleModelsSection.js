@@ -1,10 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import PropTypes from "prop-types";
 import { Button } from "@/shared/components";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
-function CompatibleModelRow({ modelId, fullModel, caps, copied, onCopy, onDeleteAlias, onTest, testStatus, isTesting }) {
+function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias, onTest, testStatus, isTesting }) {
   const borderColor = testStatus === "ok"
     ? "border-green-500/40"
     : testStatus === "error"
@@ -59,13 +58,6 @@ function CompatibleModelRow({ modelId, fullModel, caps, copied, onCopy, onDelete
             </div>
           )}
         </div>
-        {(caps?.contextWindow || caps?.maxOutput) && (
-          <p className="mt-1 text-[10px] text-text-muted">
-            {caps.contextWindow ? `${caps.contextWindow.toLocaleString()} context` : ""}
-            {caps.contextWindow && caps.maxOutput ? " · " : ""}
-            {caps.maxOutput ? `${caps.maxOutput.toLocaleString()} max output` : ""}
-          </p>
-        )}
       </div>
       <button
         onClick={onDeleteAlias}
@@ -80,16 +72,14 @@ function CompatibleModelRow({ modelId, fullModel, caps, copied, onCopy, onDelete
 
 export default function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, modelAliases, customModels, copied, onCopy, onDeleteAlias, onAddCustomModel, onDeleteCustomModel, connections, isAnthropic }) {
   const [newModel, setNewModel] = useState("");
-  const [contextWindow, setContextWindow] = useState("");
-  const [maxOutput, setMaxOutput] = useState("");
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [testingModelIds, setTestingModelIds] = useState(() => new Set());
+  const [testingModelId, setTestingModelId] = useState(null);
   const [modelTestResults, setModelTestResults] = useState({});
 
   const handleTestModel = async (modelId) => {
-    if (testingModelIds.has(modelId)) return;
-    setTestingModelIds((prev) => new Set(prev).add(modelId));
+    if (testingModelId) return;
+    setTestingModelId(modelId);
     try {
       const res = await fetch("/api/models/test", {
         method: "POST",
@@ -101,7 +91,7 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
     } catch {
       setModelTestResults((prev) => ({ ...prev, [modelId]: "error" }));
     } finally {
-      setTestingModelIds((prev) => { const n = new Set(prev); n.delete(modelId); return n; });
+      setTestingModelId(null);
     }
   };
 
@@ -122,13 +112,8 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
 
     setAdding(true);
     try {
-      await onAddCustomModel(modelId, {
-        ...(contextWindow ? { contextWindow: Number(contextWindow) } : {}),
-        ...(maxOutput ? { maxOutput: Number(maxOutput) } : {}),
-      });
+      await onAddCustomModel(modelId);
       setNewModel("");
-      setContextWindow("");
-      setMaxOutput("");
     } catch (error) {
       console.log("Error adding model:", error);
     } finally {
@@ -159,7 +144,7 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
         const modelId = model.id || model.name || model.model;
         if (!modelId) continue;
         if (allModels.some((entry) => entry.id === modelId)) continue;
-        await onAddCustomModel(modelId, model.caps);
+        await onAddCustomModel(modelId);
         importedCount += 1;
       }
       if (importedCount === 0) {
@@ -201,35 +186,6 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div>
-          <label htmlFor="compatible-model-context-window" className="text-xs text-text-muted mb-1 block">Context window</label>
-          <input
-            id="compatible-model-context-window"
-            type="number"
-            min="1"
-            step="1"
-            value={contextWindow}
-            onChange={(event) => setContextWindow(event.target.value)}
-            placeholder="Optional, in tokens"
-            className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
-          />
-        </div>
-        <div>
-          <label htmlFor="compatible-model-max-output" className="text-xs text-text-muted mb-1 block">Maximum output</label>
-          <input
-            id="compatible-model-max-output"
-            type="number"
-            min="1"
-            step="1"
-            value={maxOutput}
-            onChange={(event) => setMaxOutput(event.target.value)}
-            placeholder="Optional, in tokens"
-            className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
-          />
-        </div>
-      </div>
-
       {!canImport && (
         <p className="text-xs text-text-muted">
           Add a connection to enable importing models.
@@ -238,18 +194,17 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
 
       {allModels.length > 0 && (
         <div className="flex flex-col gap-3">
-          {allModels.map(({ id, alias, source, caps }) => (
+          {allModels.map(({ id, alias, source }) => (
             <CompatibleModelRow
               key={`${source}-${providerStorageAlias}/${id}`}
               modelId={id}
               fullModel={`${providerDisplayAlias}/${id}`}
-              caps={caps}
               copied={copied}
               onCopy={onCopy}
               onDeleteAlias={() => source === "custom" ? onDeleteCustomModel(id) : onDeleteAlias(alias)}
               onTest={connections.length > 0 ? () => handleTestModel(id) : undefined}
               testStatus={modelTestResults[id]}
-              isTesting={testingModelIds.has(id)}
+              isTesting={testingModelId === id}
             />
           ))}
         </div>
@@ -258,19 +213,3 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
   );
 }
 
-CompatibleModelsSection.propTypes = {
-  providerStorageAlias: PropTypes.string.isRequired,
-  providerDisplayAlias: PropTypes.string.isRequired,
-  modelAliases: PropTypes.object.isRequired,
-  customModels: PropTypes.arrayOf(PropTypes.object),
-  copied: PropTypes.string,
-  onCopy: PropTypes.func.isRequired,
-  onDeleteAlias: PropTypes.func.isRequired,
-  onAddCustomModel: PropTypes.func.isRequired,
-  onDeleteCustomModel: PropTypes.func.isRequired,
-  connections: PropTypes.arrayOf(PropTypes.shape({
-    id: PropTypes.string,
-    isActive: PropTypes.bool,
-  })).isRequired,
-  isAnthropic: PropTypes.bool,
-};

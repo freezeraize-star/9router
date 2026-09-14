@@ -1,81 +1,83 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import {
-  markPoolUnfit,
-  clearPoolUnfit,
-  clearAllPoolUnfit,
-  isPoolFit,
-  fitPoolIds,
-  poolFitnessSnapshot,
-  pruneExpired,
-  resetPoolFitness,
-} from "open-sse/services/proxyPoolFitness.js";
-import { pickProxyPoolId } from "../../src/lib/network/connectionProxy.js";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+const fitnessRows = new Map();
+vi.mock("@/models", () => ({
+  getProxyPoolById: vi.fn(async () => null),
+  listProxyPoolFitness: vi.fn(async (poolId) => [...fitnessRows.values()].filter((row) => poolId == null || row.poolId === poolId)),
+  upsertProxyPoolFitness: vi.fn(async (poolId, scope, until, reason) => {
+    const row = { poolId, scope, until, reason };
+    fitnessRows.set(`${poolId}:${scope}`, row);
+    return row;
+  }),
+  deleteProxyPoolFitness: vi.fn(async (poolId, scope) => fitnessRows.delete(`${poolId}:${scope}`)),
+  clearProxyPoolFitness: vi.fn(async (provider) => {
+    for (const key of [...fitnessRows.keys()]) {
+      if (!provider || key.includes(`${provider}::`)) fitnessRows.delete(key);
+    }
+  }),
+}));
+
+import { markPoolUnfit, clearPoolUnfit, clearAllPoolUnfit, isPoolFit, fitPoolIds, poolFitnessSnapshot, pruneExpired, resetPoolFitness } from "open-sse/services/proxyPoolFitness.js";
+import { pickProxyPoolId, resolveConnectionProxyConfig } from "../../src/lib/network/connectionProxy.js";
 
 describe("proxy pool fitness registry", () => {
-  beforeEach(() => resetPoolFitness());
-
-  it("marks a pool unfit for a scope and prunes on expiry", () => {
-    markPoolUnfit("p1", "freebuff::gpt-5.6-luna", Date.now() + 60_000, "limited_ip");
-    expect(isPoolFit("p1", "freebuff::gpt-5.6-luna")).toBe(false);
-    expect(isPoolFit("p1", "freebuff::other-model")).toBe(true);
-    expect(isPoolFit("p2", "freebuff::gpt-5.6-luna")).toBe(true);
-
-    markPoolUnfit("p1", "freebuff::gpt-5.6-luna", Date.now() - 1000); // expired
-    expect(isPoolFit("p1", "freebuff::gpt-5.6-luna")).toBe(true); // pruned on read
-  });
-
-  it("provider-wide mark (provider::*) covers any model lookup", () => {
-    markPoolUnfit("p1", "opencode::*", Date.now() + 60_000, "manual");
-    expect(isPoolFit("p1", "opencode::sonnet-4.6")).toBe(false);
-    expect(isPoolFit("p1", "freebuff::gpt-5.6-luna")).toBe(true);
-  });
-
-  it("fitPoolIds filters unfit pools; snapshot drops expired marks", () => {
-    markPoolUnfit("p1", "fb::m1", Date.now() + 60_000);
-    markPoolUnfit("p1", "fb::m2", Date.now() - 1000); // expired
-    expect(fitPoolIds(["p1", "p2"], "fb::m1")).toEqual(["p2"]);
-
-    const snap = poolFitnessSnapshot();
-    expect(snap.p1["fb::m1"]).toBeDefined();
-    expect(snap.p1["fb::m2"]).toBeUndefined();
-  });
-
-  it("does not reuse a pool when every smart candidate is unfit", () => {
-    markPoolUnfit("p1", "freebuff::openai/gpt-5.6-luna", Date.now() + 60_000, "limited_ip");
-    markPoolUnfit("p2", "freebuff::openai/gpt-5.6-luna", Date.now() + 60_000, "limited_ip");
-
-    expect(pickProxyPoolId(
-      ["p1", "p2"],
-      "smart",
-      "freebuff",
-      { scope: "freebuff::openai/gpt-5.6-luna" },
-    )).toBeNull();
-  });
-
-  it("preserves fail-open smart fallback for non-Freebuff providers", () => {
-    markPoolUnfit("p1", "opencode::sonnet-4.6", Date.now() + 60_000, "ip-limit");
-    markPoolUnfit("p2", "opencode::sonnet-4.6", Date.now() + 60_000, "ip-limit");
-
-    expect(pickProxyPoolId(
-      ["p1", "p2"],
-      "smart",
-      "opencode",
-      { scope: "opencode::sonnet-4.6" },
-    )).toBe("p1");
-  });
-
-  it("clear per scope, clear-all per provider, clear-all global, pruneExpired", () => {
-    markPoolUnfit("p1", "freebuff::m1", Date.now() + 60_000);
-    markPoolUnfit("p1", "kiro::m3", Date.now() + 60_000);
-
-    clearPoolUnfit("p1", "freebuff::m1");
+  beforeEach(async () => { fitnessRows.clear(); await resetPoolFitness(); });
+  it("marks scoped pools and prunes expiry", async () => {
+    await markPoolUnfit("p1", "freebuff::m1", Date.now() + 60_000);
+    expect(isPoolFit("p1", "freebuff::m1")).toBe(false);
+    expect(fitPoolIds(["p1", "p2"], "freebuff::m1")).toEqual(["p2"]);
+    await markPoolUnfit("p1", "freebuff::m1", Date.now() - 1);
     expect(isPoolFit("p1", "freebuff::m1")).toBe(true);
+  });
+  it("supports wildcard and clearing", async () => {
+    await markPoolUnfit("p1", "opencode::*", Date.now() + 60_000);
+    expect(isPoolFit("p1", "opencode::m")).toBe(false);
+    await clearPoolUnfit("p1", "opencode::*");
+    expect(isPoolFit("p1", "opencode::m")).toBe(true);
+    await markPoolUnfit("p1", "a::m", Date.now() + 60_000);
+    await markPoolUnfit("p1", "b::m", Date.now() + 60_000);
+    await clearAllPoolUnfit("a");
+    expect((await poolFitnessSnapshot()).p1["b::m"]).toBeDefined();
+  });
+  it("prunes expired entries", async () => {
+    await markPoolUnfit("p1", "x::m", Date.now() - 1);
+    expect(await pruneExpired()).toBe(1);
+    expect(await poolFitnessSnapshot()).toEqual({});
+  });
+  it("preserves concurrent scopes and reloads from durable rows", async () => {
+    await Promise.all([
+      markPoolUnfit("p1", "provider::a", Date.now() + 60_000, "a"),
+      markPoolUnfit("p1", "provider::b", Date.now() + 60_000, "b"),
+    ]);
+    expect((await poolFitnessSnapshot()).p1).toEqual(expect.objectContaining({
+      "provider::a": expect.objectContaining({ reason: "a" }),
+      "provider::b": expect.objectContaining({ reason: "b" }),
+    }));
+    await resetPoolFitness();
+    expect(await poolFitnessSnapshot()).toEqual({});
+  });
+  it("Smart returns no pool when every scoped pool is unfit", async () => {
+    await markPoolUnfit("p1", "provider::model", Date.now() + 60_000);
+    await markPoolUnfit("p2", "provider::model", Date.now() + 60_000);
+    expect(pickProxyPoolId(["p1", "p2"], "smart", "provider", [], { scope: "provider::model" })).toBeNull();
+  });
 
-    clearAllPoolUnfit("kiro");
-    expect(poolFitnessSnapshot().p1).toBeUndefined();
+  it("returns a Freebuff no-fit result instead of falling back to direct egress", async () => {
+    await markPoolUnfit("p1", "freebuff::model", Date.now() + 60_000);
+    const result = await resolveConnectionProxyConfig({
+      proxyPoolIds: ["p1"],
+      proxyRotationStrategy: "smart",
+      proxyPoolScope: "freebuff::model",
+    });
+    expect(result).toMatchObject({ noFitPool: true, strictProxy: true });
+    expect(result.connectionProxyEnabled).toBe(false);
+  });
 
-    markPoolUnfit("p2", "x::y", Date.now() - 1000);
-    expect(pruneExpired()).toBe(1);
-    expect(poolFitnessSnapshot()).toEqual({});
+  it("fails closed for an invalid explicitly selected Freebuff pool", async () => {
+    const result = await resolveConnectionProxyConfig({
+      proxyPoolId: "missing",
+      proxyPoolScope: "freebuff::model",
+    });
+    expect(result).toMatchObject({ noFitPool: true, strictProxy: true });
   });
 });

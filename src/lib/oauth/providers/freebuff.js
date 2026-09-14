@@ -1,5 +1,5 @@
+import crypto from "node:crypto";
 import { FREEBUFF_CONFIG } from "../constants/oauth.js";
-import { getFreebuffCliFingerprint } from "open-sse/shared/freebuffFingerprint.js";
 
 /**
  * Freebuff / Codebuff CLI login (fingerprint device-flow — NOT OAuth2):
@@ -29,10 +29,7 @@ const freebuff = {
   config: FREEBUFF_CONFIG,
   flowType: "device_code",
   requestDeviceCode: async (config) => {
-    // The official CLI registers its enhanced- device fingerprint here; the
-    // server binds the login to it. A random UUID here (while chat later sends
-    // a different client_id) is the exact mismatch real CLIs never produce.
-    const fingerprintId = await getFreebuffCliFingerprint();
+    const fingerprintId = crypto.randomUUID();
     const baseUrl = (config.baseUrl || LOGIN_HOST).replace(/\/$/, "");
     const response = await fetch(
       `${baseUrl}${config.loginCodePath || "/api/auth/cli/code"}`,
@@ -41,10 +38,9 @@ const freebuff = {
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
-          "User-Agent": "Bun/1.3.14",
+          "User-Agent": "codebuff-cli/0.0.138",
         },
         body: JSON.stringify({ fingerprintId }),
-        signal: AbortSignal.timeout(10_000),
       },
     );
     if (!response.ok) {
@@ -103,9 +99,8 @@ const freebuff = {
         method: "GET",
         headers: {
           Accept: "application/json",
-          "User-Agent": "Bun/1.3.14",
+          "User-Agent": "codebuff-cli/0.0.138",
         },
-        signal: AbortSignal.timeout(10_000),
       },
     );
     let data;

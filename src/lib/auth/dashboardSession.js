@@ -7,7 +7,6 @@ import { DATA_DIR } from "@/lib/dataDir";
 import { getSettings } from "@/lib/localDb";
 
 const DEFAULT_PASSWORD = "123456";
-const SESSION_MAX_AGE_SEC = 24 * 60 * 60;
 
 function loadJwtSecret() {
   if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
@@ -65,21 +64,11 @@ export async function setDashboardAuthCookie(cookieStore, request, claims = {}) 
     secure: shouldUseSecureCookie(request),
     sameSite: "lax",
     path: "/",
-    maxAge: SESSION_MAX_AGE_SEC,
   });
 }
 
 export function clearDashboardAuthCookie(cookieStore) {
   cookieStore.delete("auth_token");
-}
-
-// A logged-in dashboard session is already trusted by the middleware guard —
-// browser fetches (Model Arena & co.) then must not trigger API-key checks in
-// the LLM handlers. Mirrors canAccessPublicLlmApi's session allowance.
-export async function isDashboardSession(request) {
-  const token = request?.cookies?.get?.("auth_token")?.value;
-  if (!token) return false;
-  return await verifyDashboardAuthToken(token);
 }
 
 // Verify the current dashboard password (re-auth for sensitive actions).

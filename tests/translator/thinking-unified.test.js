@@ -18,12 +18,6 @@ describe("parseSuffix", () => {
   it("parses level suffix", () => {
     expect(parseSuffix("gpt-5(high)")).toEqual({ cleanModel: "gpt-5", override: { mode: "level", level: "high" } });
   });
-  it("parses ultra suffix", () => {
-    expect(parseSuffix("gpt-5.6-sol(ultra)")).toEqual({
-      cleanModel: "gpt-5.6-sol",
-      override: { mode: "level", level: "ultra" },
-    });
-  });
   it("parses numeric budget suffix", () => {
     expect(parseSuffix("model(8192)")).toEqual({ cleanModel: "model", override: { mode: "budget", budget: 8192 } });
   });
@@ -81,21 +75,6 @@ describe("applyThinking per provider format", () => {
     // enough (and Anthropic-compatible shims like Copilot default off even on
     // Sonnet 5). Both fields together are the documented adaptive shape.
     expect(out.thinking).toEqual({ type: "adaptive" });
-  });
-  it("claude adaptive thinking maps auto effort to a supported level", () => {
-    const out = apply("claude", "claude-opus-4.7", { thinking: { type: "adaptive" } }, "claude");
-    expect(out.output_config).toEqual({ effort: "high" });
-    expect(out.thinking).toEqual({ type: "adaptive" });
-  });
-  it("permanently adaptive Claude maps auto effort without adding a thinking switch", () => {
-    const out = apply("claude", "claude-fable-5-1", { thinking: { type: "adaptive" } }, "claude");
-    expect(out.output_config).toEqual({ effort: "high" });
-    expect(out.thinking).toBeUndefined();
-  });
-  it("Fable 5.1 → effort without a redundant thinking switch", () => {
-    const out = apply("claude", "claude-fable-5-1", { reasoning_effort: "high" }, "claude");
-    expect(out.output_config).toEqual({ effort: "high" });
-    expect(out.thinking).toBeUndefined();
   });
   it("claude haiku → enabled+budget", () => {
     const out = apply("claude", "claude-haiku-4.5", { reasoning_effort: "high" }, "claude");
@@ -180,13 +159,18 @@ describe("applyThinking per provider format", () => {
     const out = apply("openai", "kimi-k2.6", { reasoning_effort: "high" }, "kimi");
     expect(out.reasoning_effort).toBe("high");
   });
+  it("Kimi off → thinking disabled", () => {
+    const out = apply("openai", "kimi-k2.7", { reasoning_effort: "none" }, "kimi");
+    expect(out.thinking).toEqual({ type: "disabled" });
+    expect(out.reasoning_effort).toBeUndefined();
+  });
   it("Kimi auto → supported reasoning_effort", () => {
-    const out = apply("openai", "kimi-k2.7", { reasoning_effort: "auto" }, "kimchi");
+    const out = apply("openai", "kimi-k2.7", { reasoning_effort: "auto" }, "kimi");
     expect(out.reasoning_effort).toBe("high");
   });
   it("Kimi unsupported OpenAI levels → supported reasoning_effort", () => {
-    const minimal = apply("openai", "kimi-k2.7", { reasoning_effort: "minimal" }, "kimchi");
-    const xhigh = apply("openai", "kimi-k2.7", { reasoning_effort: "xhigh" }, "kimchi");
+    const minimal = apply("openai", "kimi-k2.7", { reasoning_effort: "minimal" }, "kimi");
+    const xhigh = apply("openai", "kimi-k2.7", { reasoning_effort: "xhigh" }, "kimi");
     expect(minimal.reasoning_effort).toBe("low");
     expect(xhigh.reasoning_effort).toBe("max");
   });
@@ -210,45 +194,6 @@ describe("applyThinking per provider format", () => {
   it("openai keeps xhigh for reasoning models", () => {
     const out = apply("openai", "gpt-5.3-codex", { reasoning_effort: "xhigh" }, "codex");
     expect(out.reasoning_effort).toBe("xhigh");
-  });
-  it.each([
-    ["gpt-5.6-sol", "max", "max"],
-    ["gpt-5.6-sol", "ultra", "ultra"],
-    ["gpt-5.6-terra", "max", "max"],
-    ["gpt-5.6-terra", "ultra", "ultra"],
-    ["gpt-5.6-luna", "max", "max"],
-    ["gpt-5.6-luna", "ultra", "max"],
-  ])("normalizes Codex %s effort %s to %s", (model, effort, expected) => {
-    const out = apply("openai-responses", model, { reasoning: { effort } }, "codex");
-    expect(out.reasoning_effort).toBe(expected);
-  });
-  it("applies a supported Codex Ultra suffix", () => {
-    const out = apply("openai-responses", "gpt-5.6-sol(ultra)", {}, "codex");
-    expect(out.reasoning_effort).toBe("ultra");
-  });
-  it("keeps Codex-only GPT-5.6 levels out of Kiro translation", () => {
-    const out = apply("openai", "gpt-5.6-sol", { reasoning_effort: "max" }, "kiro");
-    expect(out.reasoning_effort).toBe("xhigh");
-  });
-  it.each([
-    ["gemini-3.5-flash-lite"],
-    ["gemini-3.7-flash"],
-    ["gemini-3-pro"],
-  ])("Gemini 3.x model %s (gemini-level) over a custom OpenAI-compatible provider → reasoning_effort, not generationConfig (regression: #3718)", (model) => {
-    const out = apply("openai", model, { reasoning_effort: "medium" }, "my-custom-gemini-openai");
-    expect(out.reasoning_effort).toBe("medium");
-    expect(out.generationConfig).toBeUndefined();
-    expect(out.thinkingConfig).toBeUndefined();
-  });
-  it("Gemini 2.5 model (gemini-budget) over a custom OpenAI-compatible provider → reasoning_effort, not generationConfig (regression: #3718)", () => {
-    const out = apply("openai", "gemini-2.5-flash", { reasoning_effort: "high" }, "my-custom-gemini-openai");
-    expect(out.reasoning_effort).toBe("high");
-    expect(out.generationConfig).toBeUndefined();
-    expect(out.thinkingConfig).toBeUndefined();
-  });
-  it("Gemini model over its native format (antigravity/gemini-cli/vertex) still gets generationConfig", () => {
-    const out = apply("gemini-cli", "gemini-3.5-flash-lite", { reasoning_effort: "medium" }, "gemini-cli");
-    expect(out.generationConfig.thinkingConfig.thinkingLevel).toBe("medium");
   });
 });
 

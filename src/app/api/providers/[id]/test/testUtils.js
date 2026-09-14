@@ -2,9 +2,8 @@ import { getProviderConnectionById, updateProviderConnection } from "@/lib/local
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { testProxyUrl } from "@/lib/network/proxyTest";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
-import { getDefaultModel } from "open-sse/config/providerModels.js";
+import { getDefaultModel, getModelUpstreamId } from "open-sse/config/providerModels.js";
 import { resolveOllamaLocalHost, PROVIDERS } from "open-sse/config/providers.js";
-import { CODEX_CLI_VERSION } from "open-sse/config/appConstants.js";
 import {
   refreshProviderCredentials,
   shouldRefreshCredentials,
@@ -13,12 +12,17 @@ import {
   GEMINI_CONFIG,
   ANTIGRAVITY_CONFIG,
   KIRO_CONFIG,
+  QWEN_CONFIG,
   CLAUDE_CONFIG,
   CLINE_CONFIG,
   KILOCODE_CONFIG,
   KIMCHI_CONFIG,
 } from "@/lib/oauth/constants/oauth";
 import { buildClineHeaders } from "@/shared/utils/clineAuth";
+import { validateAgentRouterConnection } from "open-sse/executors/agentrouter.js";
+import { getKimchiUserAgent } from "open-sse/utils/kimchiUserAgent.js";
+import { assertValidKiroRegion } from "open-sse/config/awsRegion.js";
+import { deriveValidateUrl } from "open-sse/providers/schema.js";
 
 // OAuth provider test endpoints
 const OAUTH_TEST_CONFIG = {
@@ -28,7 +32,7 @@ const OAUTH_TEST_CONFIG = {
     method: "POST",
     authHeader: "Authorization",
     authPrefix: "Bearer ",
-    extraHeaders: { "Content-Type": "application/json", "originator": "codex_cli_rs", "User-Agent": `codex_cli_rs/${CODEX_CLI_VERSION}` },
+    extraHeaders: { "Content-Type": "application/json", "originator": "codex_cli_rs", "User-Agent": "codex_cli_rs/0.136.0" },
     // Minimal invalid body — triggers fast 400 without consuming quota
     body: JSON.stringify({ model: "gpt-5.3-codex", input: [], stream: false, store: false }),
     // 400 (bad request) means auth succeeded; only 401/403 means token is bad
@@ -62,6 +66,7 @@ const OAUTH_TEST_CONFIG = {
     method: "GET",
     noAuth: true,
   },
+  qwen: { checkExpiry: true, refreshable: true },
   kiro: { checkExpiry: true, refreshable: true },
   qoder: {
     // Test by hitting Qoder's userinfo endpoint with the device token.
@@ -91,63 +96,31 @@ const OAUTH_TEST_CONFIG = {
     authHeader: "Authorization",
     authPrefix: "Bearer ",
   },
-  // CodeBuddy (CN and intl) both expose the billing meter the usage handler
-  // already calls, and it is a real credential check: a valid token answers 200
-  // with the account payload, while an empty, malformed or truncated token
-  // answers 401. That makes it strictly better than the `tokenExists` stub these
-  // used to carry, which reported "valid" for any non-empty string and so could
-  // not notice an expired or revoked login.
-  //
-  // POST with an empty JSON body is correct for this endpoint; GET returns 404.
-  // Only the Authorization header is required — no User-Agent or X-Product
-  // gating — but the CLI's headers are sent so the probe looks like the traffic
-  // the provider expects rather than a bare request.
-  //
-  // Both are refreshable: refreshOAuthToken handles codebuddy-cn and
-  // codebuddy-intl, and each uses its own X-Domain (copilot.tencent.com vs
-  // www.codebuddy.ai), so a 401 here can be retried against a fresh token.
-  "codebuddy-cn": {
-    url: "https://copilot.tencent.com/v2/billing/meter/get-user-resource",
-    method: "POST",
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-    extraHeaders: {
-      "Content-Type": "application/json",
-      "User-Agent": "CLI/2.108.1 CodeBuddy/2.108.1",
-      "X-Product": "SaaS",
-      "X-IDE-Type": "CLI",
-      "X-IDE-Name": "CLI",
-      "x-requested-with": "XMLHttpRequest",
-      "x-codebuddy-request": "1",
-    },
-    body: "{}",
-    refreshable: true,
-  },
-  "codebuddy-intl": {
-    url: "https://www.codebuddy.ai/v2/billing/meter/get-user-resource",
-    method: "POST",
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-    extraHeaders: {
-      "Content-Type": "application/json",
-      "User-Agent": "CLI/2.108.1 CodeBuddy/2.108.1",
-      "X-Product": "SaaS",
-      "X-IDE-Type": "CLI",
-      "X-IDE-Name": "CLI",
-      "x-requested-with": "XMLHttpRequest",
-      "x-codebuddy-request": "1",
-    },
-    body: "{}",
-    refreshable: true,
-  },
+  "codebuddy-cn": { tokenExists: true },
+  "codebuddy-intl": { tokenExists: true },
   kimchi: {
-    url: KIMCHI_CONFIG.validationUrl || "https://api.cast.ai/v1/llm/openai/supported-providers",
+    url: KIMCHI_CONFIG.validationUrl,
     method: "GET",
     authHeader: "Authorization",
     authPrefix: "Bearer ",
     extraHeaders: {
       Accept: "application/json",
-      "User-Agent": "kimchi/0.1.40",
+      "User-Agent": getKimchiUserAgent(),
+    },
+    refreshable: false,
+  },
+  freebuff: {
+    url: "https://www.codebuff.com/api/v1/freebuff/session",
+    method: "GET",
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    extraHeaders: {
+      Accept: "application/json",
+      "User-Agent": "codebuff-cli/0.0.138",
+    },
+    acceptStatuses: [403, 404],
+    softFailMessage: {
+      403: "Connected, but Freebuff is gated (403) — country blocked or account banned.",
     },
     refreshable: false,
   },
@@ -173,22 +146,6 @@ const OAUTH_TEST_CONFIG = {
     softFailMessage: {
       402: "Connected, but Grok Build credits are exhausted (spending limit). Add credits or upgrade SuperGrok.",
     },
-  },
-  // Freebuff — probe the session endpoint (GET never claims a session).
-  freebuff: {
-    url: "https://www.codebuff.com/api/v1/freebuff/session",
-    method: "GET",
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-    extraHeaders: {
-      Accept: "application/json",
-      "User-Agent": "Bun/1.3.14",
-    },
-    acceptStatuses: [403, 404],
-    softFailMessage: {
-      403: "Connected, but Freebuff is gated (403) — country blocked or account banned.",
-    },
-    refreshable: false,
   },
 };
 
@@ -260,6 +217,27 @@ async function probeCloudCodeAssistAccess(connection, accessToken, effectiveProx
     ? "google-api-nodejs-client/9.15.1 vscode-antigravity/1.107.0"
     : "google-api-nodejs-client/9.15.1 gemini-cli/0.34.0";
 
+  if (connection.projectId) {
+    const res = await fetchWithConnectionProxy("https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        "User-Agent": userAgent,
+      },
+      body: JSON.stringify({ project: connection.projectId }),
+    }, effectiveProxy);
+
+    if (res.ok) return { valid: true, error: null };
+
+    const bodyText = await res.text().catch(() => "");
+    return {
+      valid: false,
+      error: parseProviderErrorMessage(bodyText, `GCP Project ID test failed with status ${res.status}`),
+      status: res.status,
+    };
+  }
+
   const res = await fetchWithConnectionProxy(CLOUD_CODE_ASSIST_TEST_URL, {
     method: "POST",
     headers: {
@@ -328,6 +306,7 @@ async function refreshOAuthToken(connection) {
       const clientSecret = psd.clientSecret || connection.clientSecret;
       const region = psd.region || connection.region;
       if (clientId && clientSecret) {
+        assertValidKiroRegion(region || "us-east-1");
         const endpoint = `https://oidc.${region || "us-east-1"}.amazonaws.com/token`;
         const response = await fetch(endpoint, {
           method: "POST",
@@ -346,6 +325,21 @@ async function refreshOAuthToken(connection) {
       if (!response.ok) return null;
       const data = await response.json();
       return { accessToken: data.accessToken, expiresIn: data.expiresIn || 3600, refreshToken: data.refreshToken || refreshToken };
+    }
+
+    if (provider === "qwen") {
+      const response = await fetch(QWEN_CONFIG.tokenUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          client_id: QWEN_CONFIG.clientId,
+        }),
+      });
+      if (!response.ok) return null;
+      const data = await response.json();
+      return { accessToken: data.access_token, expiresIn: data.expires_in, refreshToken: data.refresh_token || refreshToken };
     }
 
     if (provider === "cline") {
@@ -516,7 +510,7 @@ async function fetchWithConnectionProxy(url, options = {}, effectiveProxy = null
     options.signal = AbortSignal.timeout(15000);
   }
 
-  // Relay (vercel/cloudflare/deno): forward via the shared relay URL field.
+  // Vercel relay: forward via relay URL
   if (effectiveProxy?.vercelRelayUrl) {
     const { proxyAwareFetch } = await import("open-sse/utils/proxyFetch.js");
     return proxyAwareFetch(url, options, {
@@ -633,14 +627,6 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
       }
       case "openrouter": {
         const res = await fetchWithConnectionProxy("https://openrouter.ai/api/v1/auth/key", { headers: { Authorization: `Bearer ${connection.apiKey}` } }, effectiveProxy);
-        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
-      }
-      case "tokenrouter": {
-        // OpenAI-compatible gateway; the registry's validateUrl is the canonical probe.
-        const url = PROVIDERS.tokenrouter?.validateUrl || "https://api.tokenrouter.com/v1/models";
-        const res = await fetchWithConnectionProxy(url, {
-          headers: { Authorization: `Bearer ${connection.apiKey}` },
-        }, effectiveProxy);
         return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
       }
       case "glm": {
@@ -823,32 +809,7 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         const valid = !!(data && data.user);
         return { valid, error: valid ? null : "Session expired — re-paste cookie" };
       }
-      case "opencode-go": {
-        const res = await fetchWithConnectionProxy("https://opencode.ai/zen/go/v1/chat/completions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${connection.apiKey}` },
-          body: JSON.stringify({ model: getDefaultModel("opencode-go"), messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false }),
-        }, effectiveProxy);
-        const valid = res.status !== 401 && res.status !== 403;
-        return { valid, error: valid ? null : "Invalid API key" };
-      }
-      case "xiaomi-mimo":
-      case "xiaomi-tokenplan": {
-        const baseUrls = { "xiaomi-mimo": "https://api.xiaomimimo.com/v1", "xiaomi-tokenplan": "https://token-plan-sgp.xiaomimimo.com/v1" };
-        const res = await fetchWithConnectionProxy(`${baseUrls[connection.provider]}/models`, {
-          headers: { Authorization: `Bearer ${connection.apiKey}` },
-        }, effectiveProxy);
-        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
-      }
-      case "blackbox": {
-        const baseUrl = PROVIDERS["blackbox"]?.baseUrl?.replace(/\/chat\/completions$/, "") || "https://api.blackbox.ai/v1";
-        const res = await fetchWithConnectionProxy(`${baseUrl}/models`, {
-          headers: { Authorization: `Bearer ${connection.apiKey}` },
-        }, effectiveProxy);
-        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
-      }
       case "qoder": {
-        // PAT (pt-...) exchange → job token. A successful exchange proves the PAT.
         const raw = connection.apiKey || "";
         const pat = raw.startsWith("pt-") ? raw : `pt-${raw}`;
         const exRes = await fetchWithConnectionProxy(
@@ -867,114 +828,79 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         );
         return { valid: exRes.ok, error: exRes.ok ? null : "Invalid Personal Access Token" };
       }
-case "llm7": {
+      case "opencode-go": {
+        const res = await fetchWithConnectionProxy("https://opencode.ai/zen/go/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${connection.apiKey}` },
+          body: JSON.stringify({ model: getDefaultModel("opencode-go"), messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false }),
+        }, effectiveProxy);
+        const valid = res.status !== 401 && res.status !== 403;
+        return { valid, error: valid ? null : "Invalid API key" };
+      }
+      case "llm7": {
         const baseUrl = connection.providerSpecificData?.baseUrl || "https://api.llm7.io/v1";
         const res = await fetchWithConnectionProxy(`${baseUrl.replace(/\/$/, "")}/models`, {
           headers: { Authorization: `Bearer ${connection.apiKey}` },
         }, effectiveProxy);
         return { valid: res.ok, error: res.ok ? null : "Invalid API key or base URL" };
       }
-      case "bai": {
-        const url = PROVIDERS.bai?.modelsUrl || "https://api.b.ai/v1/models";
-        const res = await fetchWithConnectionProxy(url, {
-          headers: { Authorization: `Bearer ${connection.apiKey}` },
-        }, effectiveProxy);
-        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
-      }
-      case "tokenharbor": {
-        const url = PROVIDERS.tokenharbor?.modelsUrl || "https://tokenharbor.ai/v1/models";
-        const res = await fetchWithConnectionProxy(url, {
-          headers: { Authorization: `Bearer ${connection.apiKey}` },
-        }, effectiveProxy);
-        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
-      }
-      case "apinex": {
-        const url = PROVIDERS.apinex?.modelsUrl || "https://api.apinex.bond/v1/models";
-        const res = await fetchWithConnectionProxy(url, {
-          headers: { Authorization: `Bearer ${connection.apiKey}` },
-        }, effectiveProxy);
-        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
-      }
-      case "unikey": {
-        const url = PROVIDERS.unikey?.modelsUrl || "https://www.getunikey.ai/v1/models";
-        const res = await fetchWithConnectionProxy(url, {
-          headers: { Authorization: `Bearer ${connection.apiKey}` },
-        }, effectiveProxy);
-        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
-      }
-      case "nous": {
-        // /v1/models is public on Nous Research — probing it would always pass.
-        // Probe /chat/completions with a known-free model; only 401/403 = bad key.
-        const { probeNousChat } = await import("../models/nous.js");
-        return probeNousChat(connection.apiKey, (url, opts) =>
-          fetchWithConnectionProxy(url, opts, effectiveProxy)
-        );
-      }
-      case "orcarouter": {
-        // /v1/models works without a key on OrcaRouter — probe chat instead.
-        const { probeOrcarouterChat } = await import("../models/orcarouter.js");
-        return probeOrcarouterChat(connection.apiKey, (url, opts) =>
-          fetchWithConnectionProxy(url, opts, effectiveProxy)
-        );
-      }
       case "kimchi": {
-        // Dual-auth: same validation endpoint as the OAuth flow — the token (API key
-        // or OAuth access token) is sent as Authorization: Bearer.
         const url = KIMCHI_CONFIG.validationUrl || "https://api.cast.ai/v1/llm/openai/supported-providers";
         const res = await fetchWithConnectionProxy(url, {
-          method: "GET",
-          headers: {
-            Accept: "application/json",
-            Authorization: `Bearer ${connection.apiKey}`,
-            "User-Agent": "kimchi/0.1.40",
-          },
+          headers: { Accept: "application/json", Authorization: `Bearer ${connection.apiKey}` },
         }, effectiveProxy);
-        return { valid: res.ok, error: res.ok ? null : "Invalid API key", refreshed: false };
+        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
+      }
+      case "xiaomi-mimo":
+      case "xiaomi-tokenplan": {
+        const baseUrls = { "xiaomi-mimo": "https://api.xiaomimimo.com/v1", "xiaomi-tokenplan": "https://token-plan-sgp.xiaomimimo.com/v1" };
+        const res = await fetchWithConnectionProxy(`${baseUrls[connection.provider]}/models`, {
+          headers: { Authorization: `Bearer ${connection.apiKey}` },
+        }, effectiveProxy);
+        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
+      }
+      case "blackbox": {
+        const baseUrl = PROVIDERS["blackbox"]?.baseUrl || "https://api.blackbox.ai/v1/chat/completions";
+        const probeModel = getModelUpstreamId("blackbox", "gpt-5.4") || "blackboxai/openai/gpt-5.4";
+        const res = await fetchWithConnectionProxy(baseUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${connection.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: probeModel,
+            messages: [{ role: "user", content: "ping" }],
+            max_tokens: 1,
+            stream: false,
+          }),
+        }, effectiveProxy);
+        const valid = res.ok || res.status === 400;
+        let error = null;
+        if (!valid) {
+          error = (res.status === 401 || res.status === 403) ? "Invalid API key" : `Blackbox probe failed (${res.status})`;
+        }
+        return { valid, error };
+      }
+      case "agentrouter": {
+        const valid = await validateAgentRouterConnection(
+          connection.apiKey,
+          (url, options) => fetchWithConnectionProxy(url, options, effectiveProxy)
+        );
+        return { valid, error: valid ? null : "Invalid API key" };
       }
       default: {
-        // Generic fallback: any provider whose registry entry declares a validateUrl
-        // can be tested without a bespoke case. 13 providers were stuck on
-        // "Provider test not supported" purely because nobody had written a case for
-        // them, even though the registry already knew how to reach them — poolside,
-        // venice, sambanova, featherless, kilo-gateway and friends. Validating the
-        // URL with the key is exactly what the bespoke cases below do, so this is the
-        // same probe with the URL taken from config instead of hardcoded.
-        //
-        // Providers with no validateUrl (audio/image/search/embedding vendors, whose
-        // APIs are not GET /models-shaped) still fall through to the explicit error —
-        // a wrong probe would report a working key as broken.
-        const validateUrl = PROVIDERS[connection.provider]?.validateUrl;
-        if (validateUrl) {
-          const res = await fetchWithConnectionProxy(validateUrl, {
-            headers: { Authorization: `Bearer ${connection.apiKey}` },
+        // Generic probe using validateUrl or baseUrl from registry
+        const cfg = PROVIDERS[connection.provider];
+        const probeUrl = deriveValidateUrl(cfg);
+        if (probeUrl && connection.apiKey) {
+          // Mirror executors/default.js setAuth: bearer scheme → "Bearer <key>", else raw key.
+          const authHeader = cfg?.auth?.header || "Authorization";
+          const authScheme = (!cfg?.auth || cfg.auth.scheme === "bearer") ? "Bearer " : "";
+          const res = await fetchWithConnectionProxy(probeUrl, {
+            headers: { [authHeader]: `${authScheme}${connection.apiKey}` },
           }, effectiveProxy);
-          // 401/403 mean the key was refused; 404 means the configured URL is wrong
-          // rather than the key. Only those three count as a failure — a 200 is the
-          // clean pass, and anything else (e.g. 429 rate limit, 5xx) proves the
-          // endpoint answered and the key was not rejected, which is all a models
-          // probe can establish.
-          if (res.status === 401 || res.status === 403) {
-            return { valid: false, error: "Invalid API key" };
-          }
-          if (res.status === 404) {
-            return { valid: false, error: "Models endpoint not found" };
-          }
-          // Some upstreams serve /v1/models publicly, so a 200 would otherwise be read
-          // as "key accepted" when the endpoint never looked at it (checked live:
-          // venice, sambanova, kilo-gateway, api-airforce all answer 200 to a garbage
-          // key). Re-probe without credentials to tell the two apart, and report a
-          // soft warning instead of a false pass when the list is open. The connection
-          // still counts as reachable — we simply cannot vouch for the key from here.
-          if (res.status === 200) {
-            const anon = await fetchWithConnectionProxy(validateUrl, {}, effectiveProxy);
-            if (anon.status === 200) {
-              return {
-                valid: true,
-                warning: "Endpoint reachable, but the provider serves its model list publicly — the API key could not be verified.",
-              };
-            }
-          }
-          return { valid: true, error: null };
+          return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
         }
         return { valid: false, error: "Provider test not supported" };
       }
@@ -987,9 +913,13 @@ case "llm7": {
 /**
  * Test a single connection by ID, update DB, and return result.
  */
-export async function testSingleConnection(id) {
-  const connection = await getProviderConnectionById(id);
+export async function testSingleConnection(id, overrides = null) {
+  let connection = await getProviderConnectionById(id);
   if (!connection) return { valid: false, error: "Connection not found", latencyMs: 0, testedAt: new Date().toISOString() };
+
+  if (overrides) {
+    connection = { ...connection, ...overrides };
+  }
 
   const effectiveProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
 

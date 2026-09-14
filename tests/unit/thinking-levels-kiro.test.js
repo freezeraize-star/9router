@@ -1,14 +1,20 @@
-import { describe, it, expect } from "vitest";
-import { getThinkingLevels } from "../../open-sse/providers/thinkingLevels.js";
+import { describe, expect, it } from "vitest";
+import { applyKiroThinkingOverride, resolveKiroModelIntent } from "../../open-sse/config/kiroConstants.js";
 
-describe("getThinkingLevels for Kiro", () => {
-  it("does not advertise native intensity for legacy Kiro models", () => {
-    expect(getThinkingLevels("kiro", "claude-sonnet-4.5")).toBeNull();
-    expect(getThinkingLevels("kiro", "glm-5")).toBeNull();
+describe("Kiro model(level) suffix", () => {
+  it("strips suffix before synthetic Kiro variants", () => {
+    expect(resolveKiroModelIntent("claude-opus-5(high)")).toMatchObject({
+      model: "claude-opus-5",
+      upstream: "claude-opus-5",
+      thinking: false,
+      thinkingOverride: { mode: "level", level: "high" },
+    });
   });
 
-  it("advertises native levels for supported Kiro models", () => {
-    expect(getThinkingLevels("kiro", "claude-sonnet-5")).toContain("high");
-    expect(getThinkingLevels("kiro", "gpt-5.6-sol")).toContain("xhigh");
+  it("maps numeric suffix to enabled budget", () => {
+    const intent = resolveKiroModelIntent("claude-opus-5(8192)");
+    expect(applyKiroThinkingOverride({}, intent.thinkingOverride)).toEqual({
+      thinking: { type: "enabled", budget_tokens: 8192 },
+    });
   });
 });

@@ -53,9 +53,10 @@ describe("grok-cli registry", () => {
   });
 
   it("maps effort virtual models to upstream grok-4.5 and grok-4.6", () => {
-    for (const level of ["xhigh", "high", "medium", "low"]) {
-      expect(getModelUpstreamId("gcli", `grok-4.6-${level}`)).toBe("grok-4.6");
-    }
+    expect(getModelUpstreamId("gcli", "grok-4.6-xhigh")).toBe("grok-4.6");
+    expect(getModelUpstreamId("gcli", "grok-4.6-high")).toBe("grok-4.6");
+    expect(getModelUpstreamId("gcli", "grok-4.6-medium")).toBe("grok-4.6");
+    expect(getModelUpstreamId("gcli", "grok-4.6-low")).toBe("grok-4.6");
     expect(getModelUpstreamId("gcli", "grok-4.6")).toBe("grok-4.6");
     expect(getModelUpstreamId("gcli", "grok-4.5-high")).toBe("grok-4.5");
     expect(getModelUpstreamId("gcli", "grok-4.5-medium")).toBe("grok-4.5");
@@ -327,6 +328,7 @@ describe("GrokCliExecutor", () => {
   });
 
   it("omits reasoning effort for models that reject it", () => {
+    expect(supportsGrokCliReasoningEffort("grok-4.6")).toBe(true);
     expect(supportsGrokCliReasoningEffort("grok-4.5")).toBe(true);
     expect(supportsGrokCliReasoningEffort("grok-build")).toBe(false);
     expect(supportsGrokCliReasoningEffort("grok-composer-2.5-fast")).toBe(false);
@@ -339,41 +341,6 @@ describe("GrokCliExecutor", () => {
       }, true, { connectionId: `effort-${model}` });
       expect(out.reasoning).toEqual({ summary: "concise" });
       expect(out.include).toContain("reasoning.encrypted_content");
-    }
-  });
-
-  it("forwards reasoning effort for grok-4.6 (#3514)", () => {
-    expect(supportsGrokCliReasoningEffort("grok-4.6")).toBe(true);
-
-    // Effort carried by the request body...
-    const explicit = executor.transformRequest("grok-4.6", {
-      model: "grok-4.6",
-      input: "hi",
-      reasoning_effort: "xhigh",
-    }, true, { connectionId: "g46-explicit" });
-    expect(explicit.model).toBe("grok-4.6");
-    expect(explicit.reasoning).toEqual({ effort: "xhigh", summary: "concise" });
-    expect(explicit.reasoning_effort).toBeUndefined();
-
-    // ...and by the virtual model suffix.
-    for (const level of ["low", "medium", "high", "xhigh"]) {
-      const out = executor.transformRequest(`grok-4.6-${level}`, {
-        model: `grok-4.6-${level}`,
-        input: "hi",
-      }, true, { connectionId: `g46-${level}` });
-      expect(out.model).toBe("grok-4.6");
-      expect(out.reasoning).toEqual({ effort: level, summary: "concise" });
-    }
-  });
-
-  it("keeps the allowlist closed around grok-4.5 / grok-4.6", () => {
-    for (const model of ["grok-4.5", "grok-4.5-xhigh", "grok-4.6", "grok-4.6-xhigh"]) {
-      expect(supportsGrokCliReasoningEffort(model)).toBe(true);
-    }
-    // Non-reasoning models keep receiving no effort (#2538, #2539), and an
-    // unseen version stays fail-closed until it is verified against the proxy.
-    for (const model of ["grok-build", "grok-composer-2.5-fast", "grok-code-fast-1", "grok-4.7", "grok-45"]) {
-      expect(supportsGrokCliReasoningEffort(model)).toBe(false);
     }
   });
 

@@ -1,19 +1,45 @@
 // Real Antigravity-MITM requests (Gemini-internal: { request: { contents, ... } }) → OpenAI.
 import { describe, it, expect } from "vitest";
 import "./registerAll.js";
+import { getRequestTranslator } from "../../open-sse/translator/registry.js";
 import { translateRequest, translateResponse, initState } from "../../open-sse/translator/index.js";
 import { FORMATS } from "../../open-sse/translator/formats.js";
 import { AntigravityExecutor } from "../../open-sse/executors/antigravity.js";
-import { openaiToAntigravityRequest } from "../../open-sse/translator/request/openai-to-gemini.js";
-import { ANTIGRAVITY_DEFAULT_SYSTEM } from "../../open-sse/config/appConstants.js";
 
 const AG2O = (req) =>
   translateRequest(FORMATS.ANTIGRAVITY, FORMATS.OPENAI, "m", { request: req }, true, null, null);
 
+describe("Antigravity request sanitization", () => {
+  it("strips Zed's competitive Claude-agent prompt without mutating other parts", () => {
+    const input = {
+      request: {
+        systemInstruction: {
+          role: "system",
+          parts: [
+            { text: "prefix You are a Claude agent, built on Anthropic's Claude Agent SDK. suffix" },
+            { inlineData: { mimeType: "text/plain", data: "keep" } },
+            { text: "Keep this prompt." },
+          ],
+        },
+        contents: [{ role: "user", parts: [{ text: "hello" }] }],
+      },
+      project: "project-1",
+    };
+    const out = new AntigravityExecutor().transformRequest("gemini-3-flash", input);
+    const parts = out.request.systemInstruction.parts;
+
+    expect(parts[0].text).toBe("prefix  suffix");
+    expect(parts[1]).toEqual({ inlineData: { mimeType: "text/plain", data: "keep" } });
+    expect(parts[2].text).toBe("Keep this prompt.");
+    expect(input.request.systemInstruction.parts[0].text).toContain("Claude Agent SDK");
+  });
+});
+
 describe("Antigravity → OpenAI", () => {
-  // antigravity-to-openai.js — content with BOTH functionResponse and functionCall/text
-  // previously returned toolResults early → dropped tool calls / text (fixed in #2225)
-  it("functionResponse + functionCall in same content keeps both", () => {
+  // antigravity-to-openai.js:177-189 — content with BOTH functionResponse and functionCall/text
+  // returns toolResults early → drops the tool calls / text.
+  // KNOWN BUG
+  it.fails("functionResponse + functionCall in same content keeps both", () => {
     const out = AG2O({
       contents: [{
         role: "model",
@@ -56,6 +82,9 @@ describe("Antigravity → OpenAI", () => {
 });
 
 describe("Antigravity → Claude", () => {
+  // Upstream 9router #2225: shared state.toolCalls map between Gemini→OpenAI and
+  // OpenAI→Claude translators caused missing content_block_start for tool_use,
+  // leading to "API Error: Content block not found" in Claude Code.
   it("tool call input_json_delta includes Anthropic index", () => {
     const state = initState(FORMATS.CLAUDE);
     const events = translateResponse(FORMATS.ANTIGRAVITY, FORMATS.CLAUDE, {
@@ -82,6 +111,10 @@ describe("Antigravity → Claude", () => {
 });
 
 describe("Antigravity executor", () => {
+  it("uses the same translator registry as translator modules", () => {
+    expect(getRequestTranslator("openai:antigravity")).toBeDefined();
+  });
+
   it("strips optional from nested tool schemas", () => {
     const out = new AntigravityExecutor().transformRequest("gemini-2.5-pro", {
       request: {
@@ -109,31 +142,180 @@ describe("Antigravity executor", () => {
     expect(query).toEqual({ type: "string", description: "Search query" });
   });
 
-  it("does not inject the legacy Antigravity default system prompt for Gemini-backed models", () => {
-    const out = openaiToAntigravityRequest("gemini-3.5-flash-low", {
-      messages: [
-        { role: "system", content: "USER_SYSTEM_PROMPT" },
-        { role: "user", content: "hello" },
-      ],
+  // v1internal rejects a tool declaration carrying BOTH `parameters` and
+  // `parametersJsonSchema` ("must not be set when parameters is set").
+  // The executor must strip parametersJsonSchema on the v1internal request
+  // path only, leaving every other tool schema field intact.
+  it("strips parametersJsonSchema on the v1internal tool path", () => {
+    const out = new AntigravityExecutor().transformRequest("gemini-3.6-flash-high", {
+      request: {
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+        tools: [{
+          functionDeclarations: [{
+            name: "lookup",
+            description: "Lookup a value",
+            parameters: {
+              type: "object",
+              properties: { query: { type: "string" } },
+            },
+            parametersJsonSchema: {
+              type: "object",
+              properties: { query: { type: "string" } },
+            },
+          }],
+        }],
+      },
     }, true, { projectId: "project-1", connectionId: "conn-1" });
 
-    const system = JSON.stringify(out.request.systemInstruction);
-    expect(system).toContain("USER_SYSTEM_PROMPT");
-    expect(system).not.toContain(ANTIGRAVITY_DEFAULT_SYSTEM);
-    expect(system).not.toContain("Please ignore the following [ignore]");
+    const decl = out.request.tools[0].functionDeclarations[0];
+    expect(decl.parametersJsonSchema).toBeUndefined();
+    expect(decl.name).toBe("lookup");
+    expect(decl.description).toBe("Lookup a value");
+    expect(decl.parameters).toEqual({
+      type: "object",
+      properties: { query: { type: "string" } },
+    });
   });
 
-  it("does not inject the legacy Antigravity default system prompt for Claude-backed models", () => {
-    const out = openaiToAntigravityRequest("claude-opus-4-6-thinking", {
-      messages: [
-        { role: "system", content: "USER_SYSTEM_PROMPT" },
-        { role: "user", content: "hello" },
-      ],
+  // Whitelist fix: Antigravity IDE passthrough sends unexpected OpenAI fields
+  // in body.request → Google API rejects with "Unknown name" 400.
+  it("whitelists request fields — strips max_tokens, messages, stream, etc.", () => {
+    const out = new AntigravityExecutor().transformRequest("gemini-3.5-flash-low", {
+      request: {
+        // Legitimate Antigravity fields
+        contents: [{ role: "user", parts: [{ text: "hello" }] }],
+        systemInstruction: { role: "user", parts: [{ text: "You are helpful" }] },
+        generationConfig: { maxOutputTokens: 8192, temperature: 0.7 },
+        sessionId: "sess-123",
+        // Unexpected fields from Antigravity IDE passthrough (must be stripped)
+        max_tokens: 4096,
+        messages: [{ role: "user", content: "hello" }],
+        temperature: 0.7,
+        top_p: 0.9,
+        tools: undefined,
+        tool_choice: "auto",
+        stream: true,
+        stream_options: { include_usage: true },
+      },
     }, true, { projectId: "project-1", connectionId: "conn-1" });
 
-    const system = JSON.stringify(out.request.systemInstruction);
-    expect(system).toContain("USER_SYSTEM_PROMPT");
-    expect(system).not.toContain(ANTIGRAVITY_DEFAULT_SYSTEM);
-    expect(system).not.toContain("Please ignore the following [ignore]");
+    const req = out.request;
+    // Legitimate fields preserved
+    expect(req.contents).toBeDefined();
+    expect(req.systemInstruction).toBeDefined();
+    expect(req.generationConfig).toBeDefined();
+    expect(req.sessionId).toBe("sess-123");
+
+    // Unexpected fields stripped
+    expect(req.max_tokens).toBeUndefined();
+    expect(req.messages).toBeUndefined();
+    expect(req.temperature).toBeUndefined();
+    expect(req.top_p).toBeUndefined();
+    expect(req.tool_choice).toBeUndefined();
+    expect(req.stream).toBeUndefined();
+    expect(req.stream_options).toBeUndefined();
+  });
+
+  it("preserves generationConfig.maxOutputTokens cap at 16384", () => {
+    const out = new AntigravityExecutor().transformRequest("gemini-3.5-flash-low", {
+      request: {
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+        generationConfig: { maxOutputTokens: 100000 },
+      },
+    }, true, { projectId: "p", connectionId: "c" });
+
+    expect(out.request.generationConfig.maxOutputTokens).toBe(16384);
+  });
+
+  it("preserves translated envelope contents instead of reading nested request.request", () => {
+    const out = new AntigravityExecutor().transformRequest("gemini-3.5-flash-low", {
+      model: "gemini-3.5-flash-low",
+      project: "project-1",
+      userAgent: "antigravity",
+      requestType: "agent",
+      requestId: "agent-existing",
+      request: {
+        contents: [{ role: "user", parts: [{ text: "hello" }] }],
+        systemInstruction: { role: "user", parts: [{ text: "You are helpful" }] },
+        generationConfig: { maxOutputTokens: 32 },
+        sessionId: "sess-123",
+      },
+    }, true, { projectId: "project-1", connectionId: "conn-1" });
+
+    expect(out.request.contents).toEqual([{ role: "user", parts: [{ text: "hello" }] }]);
+    expect(out.request.systemInstruction).toEqual({ role: "user", parts: [{ text: "You are helpful" }] });
+    expect(out.request.generationConfig.maxOutputTokens).toBe(32);
+    expect(out.request.sessionId).toBe("sess-123");
+  });
+
+  // Issue #6: v1internal rejects content entries with empty parts[] (400 on all models)
+  it("strips content entries that end up with empty parts after filtering", () => {
+    const out = new AntigravityExecutor().transformRequest("gemini-3.5-flash-low", {
+      request: {
+        contents: [
+          { role: "user", parts: [{ text: "prompt" }] },
+          { role: "model", parts: [{ thought: true, text: "thinking..." }] },
+          { role: "model", parts: [{ thoughtSignature: "sig" }] },
+        ],
+      },
+    }, true, { projectId: "p", connectionId: "c" });
+
+    expect(out.request.contents).toEqual([{ role: "user", parts: [{ text: "prompt" }] }]);
+    expect(out.request.contents.every(c => c.parts.length > 0)).toBe(true);
+  });
+
+  it("converts Claude image and document blocks to inlineData for Claude Antigravity models", () => {
+    const claudeReq = {
+      model: "claude-opus-4-6-thinking",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "explain this image" },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+              },
+            },
+            {
+              type: "document",
+              source: {
+                type: "base64",
+                media_type: "application/pdf",
+                data: "JVBERi0xLjEKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZy9QYWdlcyAyIDAgUj4+ZW5kb2Jq",
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const out = translateRequest(
+      FORMATS.CLAUDE,
+      FORMATS.ANTIGRAVITY,
+      "claude-opus-4-6-thinking",
+      claudeReq,
+      true,
+      { projectId: "p", connectionId: "c" }
+    );
+
+    const parts = out.request.contents[0].parts;
+    expect(parts).toHaveLength(3);
+    expect(parts[0]).toEqual({ text: "explain this image" });
+    expect(parts[1]).toEqual({
+      inlineData: {
+        mimeType: "image/png",
+        data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      },
+    });
+    expect(parts[2]).toEqual({
+      inlineData: {
+        mimeType: "application/pdf",
+        data: "JVBERi0xLjEKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZy9QYWdlcyAyIDAgUj4+ZW5kb2Jq",
+      },
+    });
   });
 });

@@ -1,5 +1,45 @@
 import { getModelsByProviderId } from "open-sse/config/providerModels.js";
 
+// Providers whose usage endpoint returns per-model quota rows.
+// The model filter dropdown is shown only for these providers.
+export const MULTI_MODEL_PROVIDERS = new Set([
+  "antigravity",
+  "gemini-cli",
+]);
+
+/**
+ * Build model filter options for a given provider.
+ * @param {string} provider - Provider id
+ * @returns {Array<{id: string, name: string}>}
+ */
+export function getModelOptionsForProvider(provider) {
+  if (!provider || !MULTI_MODEL_PROVIDERS.has(provider)) return [];
+  const models = getModelsByProviderId(provider);
+  return models.map((m) => ({ id: m.id, name: m.name || m.id }));
+}
+
+/**
+ * Check whether a provider supports per-model quota filtering.
+ * @param {string} provider - Provider id
+ * @returns {boolean}
+ */
+export function isMultiModelProvider(provider) {
+  return MULTI_MODEL_PROVIDERS.has(provider);
+}
+
+export function isCodexUnavailable401(connection, quotaEntry, error) {
+  if (connection?.provider !== "codex") return false;
+  const msg = typeof quotaEntry?.message === "string" ? quotaEntry.message : "";
+  const err = typeof error === "string" ? error : "";
+  return (
+    msg.includes("Usage API temporarily unavailable (401)") ||
+    msg.includes("temporarily unavailable (401)") ||
+    (msg.includes("Codex connected") && msg.includes("401")) ||
+    err.includes("temporarily unavailable (401)") ||
+    err.includes("HTTP 401")
+  );
+}
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 export const QUOTA_CACHE_KEY = "quotaCacheData";
 export const REFRESH_INTERVAL_MS = 60000;
@@ -36,15 +76,14 @@ export function getConnectionQuotaRemaining(connection, quotaData) {
   return Number.POSITIVE_INFINITY;
 }
 
-// Stable group-by-provider: first-seen provider order, original order within group.
 function groupByProviderStable(connections) {
-  const seen = new Map();
-  for (const conn of connections) {
-    const key = conn.provider || "";
-    if (!seen.has(key)) seen.set(key, []);
-    seen.get(key).push(conn);
+  const groups = new Map();
+  for (const connection of connections) {
+    const provider = connection.provider || "";
+    if (!groups.has(provider)) groups.set(provider, []);
+    groups.get(provider).push(connection);
   }
-  return Array.from(seen.values()).flat();
+  return Array.from(groups.values()).flat();
 }
 
 export function sortVisibleConnections(
@@ -169,6 +208,30 @@ export function getSafePagination(pagination, fallbackPageSize) {
   );
 }
 
+/**
+ * Determine the model identifier for a normalized quota row.
+ * Falls back to the quota name when no explicit modelKey is present.
+ * @param {Object} quota - Normalized quota row
+ * @returns {string}
+ */
+export function getQuotaModelKey(quota) {
+  if (!quota) return "";
+  return quota.modelKey || quota.name || "";
+}
+
+/**
+ * Filter normalized quota rows by a selected model id.
+ * @param {Array<Object>} quotas - Normalized quota rows
+ * @param {string} modelFilter - Selected model id or "all"
+ * @returns {Array<Object>}
+ */
+export function filterQuotasByModel(quotas, modelFilter) {
+  if (!Array.isArray(quotas) || modelFilter === "all" || !modelFilter) {
+    return quotas || [];
+  }
+  return quotas.filter((q) => getQuotaModelKey(q) === modelFilter);
+}
+
 export function getSafeTotals(totals, fallbackTotal = 0) {
   return (
     totals || {
@@ -258,70 +321,6 @@ export function formatResetTime(date) {
   }
 }
 
-/**
- * Freebucks account header line — mirrors upstream freebucksHeaderLine:
- * "10/25 Freebucks daily · resets in 4h 12m · 20 in wallet · $6.50 monthly usage left".
- * Wallet shown only when non-empty; monthly only when the server sent it
- * (older servers omit it — showing $0 would read as "nothing left").
- * @param {{balance: number|null, daily: {limit:number,spent:number,remaining:number,resetAt:string|null}, wallet:{balance:number}, monthly?:{remainingUsd:number,limitUsd:number|null,resetAt:string|null}}} freebucks
- * @returns {string|null}
- */
-export function formatFreebucksHeader(freebucks) {
-  if (!freebucks?.daily) return null;
-  const parts = [
-    `${Math.max(0, Math.round(freebucks.daily.remaining))}/${Math.max(0, Math.round(freebucks.daily.limit))} Freebucks daily`,
-  ];
-  const countdown = formatResetTime(freebucks.daily.resetAt);
-  if (countdown !== "-") parts.push(`resets in ${countdown}`);
-  if (Number(freebucks.wallet?.balance) > 0) {
-    parts.push(`${Math.max(0, Math.round(freebucks.wallet.balance))} in wallet`);
-  }
-  if (freebucks.monthly && Number.isFinite(Number(freebucks.monthly.remainingUsd))) {
-    parts.push(`${formatFreebucksUsd(freebucks.monthly.remainingUsd)} monthly usage left`);
-  }
-  return parts.join(" · ");
-}
-
-/**
- * "$25", "$4.20", "$0" — whole dollars until the figure is small enough that
- * the cents are the story. Mirrors upstream formatAllowanceUsd.
- */
-export function formatFreebucksUsd(usd) {
-  const safe = Math.max(0, Number(usd));
-  if (safe >= 10) return `$${Math.round(safe)}`;
-  if (safe >= 1) return `$${safe.toFixed(1).replace(/\.0$/, "")}`;
-  return `$${safe.toFixed(2)}`;
-}
-
-/**
- * "15 Freebucks/hr" — a bare number would read as dollars; the unit is the
- * hour, not the message.
- */
-export function formatFreebucksPrice(price) {
-  return `${Math.max(0, Math.round(Number(price) || 0))} Freebucks/hr`;
-}
-
-/**
- * Get Tailwind color class based on percentage
- * @param {number} percentage - Remaining percentage (0-100)
- * @returns {string} Color name: "green" | "yellow" | "red"
- */
-export function getStatusColor(percentage) {
-  if (percentage > 70) return "green";
-  if (percentage >= 30) return "yellow";
-  return "red"; // 0-29% including 0% (out of quota) - show red
-}
-
-/**
- * Get status emoji based on percentage
- * @param {number} percentage - Remaining percentage (0-100)
- * @returns {string} Emoji: "🟢" | "🟡" | "🔴"
- */
-export function getStatusEmoji(percentage) {
-  if (percentage > 70) return "🟢";
-  if (percentage >= 30) return "🟡";
-  return "🔴"; // 0-29% including 0% (out of quota) - show red
-}
 
 /**
  * Calculate remaining percentage
@@ -354,42 +353,6 @@ export function getRemainingPercentage(quota) {
   return calculatePercentage(quota?.used, quota?.total);
 }
 
-export function getQuotaVisibilityKey(quota) {
-  if (!quota || typeof quota !== "object") return "";
-  return String(quota.modelKey || quota.name || "").trim();
-}
-
-/**
- * Trim hidden quota keys to only those matching currently valid quotas.
- * Stale or obsolete model keys are dropped.
- */
-export function trimHiddenQuotaKeys(hidden = [], quotas = []) {
-  if (!Array.isArray(hidden) || hidden.length === 0) return [];
-  const validKeys = new Set(quotas.map(getQuotaVisibilityKey).filter(Boolean));
-  return [...new Set(hidden.map((k) => String(k).trim()).filter((k) => validKeys.has(k)))];
-}
-
-function getProviderHiddenQuotaSet(provider, quotaVisibility, quotas = []) {
-  const hidden = quotaVisibility?.[provider]?.hidden;
-  if (!Array.isArray(hidden) || hidden.length === 0) return new Set();
-  const trimmed = quotas.length > 0 ? trimHiddenQuotaKeys(hidden, quotas) : hidden;
-  return new Set(trimmed.map(String));
-}
-
-export function filterQuotasByVisibility(provider, quotas = [], quotaVisibility = {}) {
-  if (!Array.isArray(quotas) || quotas.length === 0) return [];
-  const hidden = getProviderHiddenQuotaSet(provider, quotaVisibility, quotas);
-  if (hidden.size === 0) return quotas;
-  return quotas.filter((quota) => !hidden.has(getQuotaVisibilityKey(quota)));
-}
-
-export function getHiddenQuotaRows(provider, quotas = [], quotaVisibility = {}) {
-  if (!Array.isArray(quotas) || quotas.length === 0) return [];
-  const hidden = getProviderHiddenQuotaSet(provider, quotaVisibility, quotas);
-  if (hidden.size === 0) return [];
-  return quotas.filter((quota) => hidden.has(getQuotaVisibilityKey(quota)));
-}
-
 /**
  * Parse provider-specific quota structures into normalized array
  * @param {string} provider - Provider name (github, antigravity, codex, kiro, claude)
@@ -418,68 +381,10 @@ export function parseQuotaData(provider, data) {
 
       case "antigravity":
         if (data.quotas) {
-          const entries = Object.entries(data.quotas);
-          const weeklyKeys = new Set(["gemini_weekly", "claude_gpt_weekly"]);
-          const geminiModels = entries.filter(([k]) => k.startsWith("gemini-") && !k.includes("image"));
-          const claudeModels = entries.filter(([k]) => k.startsWith("claude-"));
-          const imageModels = entries.filter(([k]) => k.includes("image"));
-          const weeklyModels = entries.filter(([k]) => weeklyKeys.has(k));
-          const otherModels = entries.filter(([k]) => !k.startsWith("gemini-") && !k.startsWith("claude-") && !k.includes("image") && !weeklyKeys.has(k));
-
-          if (geminiModels.length > 0) {
-            const rep = geminiModels.reduce((min, cur) =>
-              (cur[1].remainingPercentage ?? 100) < (min[1].remainingPercentage ?? 100) ? cur : min
-            )[1];
-            normalizedQuotas.push({
-              name: "Gemini (Flash / Pro)",
-              modelKey: "gemini",
-              used: rep.used || 0,
-              total: rep.total || 0,
-              resetAt: rep.resetAt || null,
-              remainingPercentage: rep.remainingPercentage,
-            });
-          }
-
-          if (claudeModels.length > 0) {
-            const rep = claudeModels.reduce((min, cur) =>
-              (cur[1].remainingPercentage ?? 100) < (min[1].remainingPercentage ?? 100) ? cur : min
-            )[1];
-            normalizedQuotas.push({
-              name: "Claude (Sonnet / Opus)",
-              modelKey: "claude",
-              used: rep.used || 0,
-              total: rep.total || 0,
-              resetAt: rep.resetAt || null,
-              remainingPercentage: rep.remainingPercentage,
-            });
-          }
-
-          weeklyModels.forEach(([modelKey, quota]) => {
+          Object.entries(data.quotas).forEach(([modelKey, quota]) => {
             normalizedQuotas.push({
               name: quota.displayName || modelKey,
-              modelKey,
-              used: quota.used || 0,
-              total: quota.total || 0,
-              resetAt: quota.resetAt || null,
-              remainingPercentage: quota.remainingPercentage,
-            });
-          });
-
-          imageModels.forEach(([modelKey, quota]) => {
-            normalizedQuotas.push({
-              name: quota.displayName || modelKey,
-              modelKey,
-              used: quota.used || 0,
-              total: quota.total || 0,
-              resetAt: quota.resetAt || null,
-              remainingPercentage: quota.remainingPercentage,
-            });
-          });
-
-          otherModels.forEach(([modelKey, quota]) => {
-            normalizedQuotas.push({
-              name: quota.displayName || modelKey,
-              modelKey,
+              modelKey: modelKey, // Keep modelKey for sorting
               used: quota.used || 0,
               total: quota.total || 0,
               resetAt: quota.resetAt || null,
@@ -566,8 +471,6 @@ export function parseQuotaData(provider, data) {
               name,
               used: quota.used || 0,
               total: quota.total || 0,
-              remaining: quota.remaining !== undefined ? quota.remaining : Math.max(0, (quota.total || 100) - (quota.used || 0)),
-              remainingPercentage: quota.remainingPercentage !== undefined ? quota.remainingPercentage : calculatePercentage(quota.used, quota.total),
               resetAt: quota.resetAt || null,
             });
           });
@@ -610,40 +513,8 @@ export function parseQuotaData(provider, data) {
         }
         break;
 
-      case "grok-cli":
-        // Grok Build credits (on-demand window + prepaid balance).
-        // Do NOT forward absolute `remaining` — getRemainingPercentage treats
-        // it as a 0–100 percentage (same as Qoder). Use remainingPercentage.
-        if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
-            normalizedQuotas.push({
-              name,
-              used: quota.used || 0,
-              total: quota.total || 0,
-              resetAt: quota.resetAt || null,
-              remainingPercentage: quota.remainingPercentage,
-            });
-          });
-        }
-        break;
-
       case "kimi":
-        // Weekly / Ratelimit from /v1/usages. Prefer remainingPercentage only.
-        if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
-            normalizedQuotas.push({
-              name,
-              used: quota.used || 0,
-              total: quota.total || 0,
-              resetAt: quota.resetAt || null,
-              remainingPercentage: quota.remainingPercentage,
-            });
-          });
-        }
-        break;
-
       case "deepseek":
-        // Credit balance — remainingPercentage only (no absolute remaining).
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([name, quota]) => {
             normalizedQuotas.push({
@@ -658,10 +529,6 @@ export function parseQuotaData(provider, data) {
         break;
 
       case "freebuff":
-        // Session quotas keyed by model id — label rows with the friendly
-        // displayName (from the registry) and keep modelKey for ordering.
-        // Metered rows carry the live Freebucks price (price) + promo tagline
-        // (priceNote), both server-authoritative.
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([modelKey, quota]) => {
             normalizedQuotas.push({
@@ -671,33 +538,15 @@ export function parseQuotaData(provider, data) {
               total: quota.total || 0,
               resetAt: quota.resetAt || null,
               recurring: quota.recurring !== false,
-              price: quota.price,
-              priceNote: quota.priceNote,
-              ...(quota.peak ? { peak: true, peakSurcharge: quota.peakSurcharge, peakEndsAt: quota.peakEndsAt } : {}),
             });
           });
         }
         break;
 
-      case "groq":
-        // Requests/Tokens rate-limit windows from response headers — absolute
-        // used/total (calculatePercentage derives the bar), like Codex/Kiro.
-        if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
-            normalizedQuotas.push({
-              name,
-              used: quota.used || 0,
-              total: quota.total || 0,
-              resetAt: quota.resetAt || null,
-            });
-          });
-        }
-        break;
-
-      case "ollama":
-        // Session (5h) / Weekly (7d) / Monthly (30d) usage % from
-        // ollama.com/api/usage (the API currently reports `monthly`).
-        // remainingPercentage only — no absolute remaining (UI treats remaining as %).
+      case "grok-cli":
+        // Grok Build credits (on-demand window + prepaid balance).
+        // Do NOT forward absolute `remaining` — getRemainingPercentage treats
+        // it as a 0–100 percentage (same as Qoder). Use remainingPercentage.
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([name, quota]) => {
             normalizedQuotas.push({
@@ -745,31 +594,15 @@ export function parseQuotaData(provider, data) {
     return [];
   }
 
-  if (provider?.toLowerCase() === "claude") {
-    const CLAUDE_QUOTA_ORDER = {
-      "session (5h)": 0,
-      "weekly (7d)": 1,
-      "weekly fable (7d)": 2,
-      "weekly opus (7d)": 3,
-      "weekly sonnet (7d)": 4,
-    };
-    normalizedQuotas.sort((a, b) => (CLAUDE_QUOTA_ORDER[a.name] ?? 99) - (CLAUDE_QUOTA_ORDER[b.name] ?? 99));
-    return normalizedQuotas;
-  }
-
   // Sort quotas according to PROVIDER_MODELS order
   const modelOrder = getModelsByProviderId(provider);
   if (modelOrder.length > 0) {
     const orderMap = new Map(modelOrder.map((m, i) => [m.id, i]));
     
     normalizedQuotas.sort((a, b) => {
-      // Use modelKey for antigravity (mapped to family anchor), otherwise use name
-      let keyA = a.modelKey || a.name;
-      let keyB = b.modelKey || b.name;
-      if (keyA === "gemini") keyA = "gemini-3.8-flash-high";
-      if (keyA === "claude") keyA = "claude-sonnet-4-6";
-      if (keyB === "gemini") keyB = "gemini-3.8-flash-high";
-      if (keyB === "claude") keyB = "claude-sonnet-4-6";
+      // Use modelKey for antigravity, otherwise use name
+      const keyA = a.modelKey || a.name;
+      const keyB = b.modelKey || b.name;
       const orderA = orderMap.get(keyA) ?? 999;
       const orderB = orderMap.get(keyB) ?? 999;
       return orderA - orderB;

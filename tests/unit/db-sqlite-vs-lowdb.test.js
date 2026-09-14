@@ -101,117 +101,6 @@ describe("DB SQLite layer — public API parity", () => {
     expect(back.providerSpecificData).toEqual({ foo: "bar" });
   });
 
-  it("providerConnections: successful validation clears stale routing locks", async () => {
-    const c = await sqliteDb.createProviderConnection({
-      provider: "health-reset-update",
-      authType: "oauth",
-      email: "update@example.com",
-      accessToken: "old-token",
-    });
-    await sqliteDb.updateProviderConnection(c.id, {
-      testStatus: "unavailable",
-      lastError: "Access denied",
-      lastErrorAt: "2026-09-05T00:00:00.000Z",
-      errorCode: 403,
-      backoffLevel: 3,
-      rateLimitedUntil: "2099-01-01T00:00:00.000Z",
-      modelLock_modelA: "2099-01-01T00:00:00.000Z",
-      modelLock_modelB: "2099-01-01T00:00:00.000Z",
-    });
-
-    await sqliteDb.updateProviderConnection(c.id, { testStatus: "active" });
-
-    const back = await sqliteDb.getProviderConnectionById(c.id);
-    expect(back).toMatchObject({
-      testStatus: "active",
-      lastError: null,
-      lastErrorAt: null,
-      errorCode: null,
-      backoffLevel: 0,
-      rateLimitedUntil: null,
-      modelLock_modelA: null,
-      modelLock_modelB: null,
-    });
-  });
-
-  it("providerConnections: re-saving valid OAuth credentials clears stale routing locks", async () => {
-    const existing = await sqliteDb.createProviderConnection({
-      provider: "health-reset-resave",
-      authType: "oauth",
-      email: "resave@example.com",
-      accessToken: "old-token",
-    });
-    await sqliteDb.updateProviderConnection(existing.id, {
-      testStatus: "unavailable",
-      lastError: "Access denied",
-      errorCode: 403,
-      backoffLevel: 2,
-      modelLock_modelA: "2099-01-01T00:00:00.000Z",
-    });
-
-    const resaved = await sqliteDb.createProviderConnection({
-      provider: "health-reset-resave",
-      authType: "oauth",
-      email: "resave@example.com",
-      accessToken: "new-token",
-      testStatus: "active",
-    });
-
-    expect(resaved.id).toBe(existing.id);
-    const back = await sqliteDb.getProviderConnectionById(existing.id);
-    expect(back).toMatchObject({
-      accessToken: "new-token",
-      testStatus: "active",
-      lastError: null,
-      errorCode: null,
-      backoffLevel: 0,
-      modelLock_modelA: null,
-    });
-  });
-
-  it("providerConnections: active soft warnings survive the health reset", async () => {
-    const c = await sqliteDb.createProviderConnection({
-      provider: "health-reset-warning",
-      authType: "oauth",
-      email: "warning@example.com",
-    });
-    await sqliteDb.updateProviderConnection(c.id, {
-      testStatus: "unavailable",
-      lastError: "Old failure",
-      modelLock_modelA: "2099-01-01T00:00:00.000Z",
-    });
-
-    const warningAt = "2026-09-06T00:00:00.000Z";
-    await sqliteDb.updateProviderConnection(c.id, {
-      testStatus: "active",
-      lastError: "Connected, but credits are exhausted",
-      lastErrorAt: warningAt,
-    });
-
-    const back = await sqliteDb.getProviderConnectionById(c.id);
-    expect(back).toMatchObject({
-      testStatus: "active",
-      lastError: "Connected, but credits are exhausted",
-      lastErrorAt: warningAt,
-      errorCode: null,
-      backoffLevel: 0,
-      modelLock_modelA: null,
-    });
-  });
-
-  it("providerConnections: GitHub OAuth uses account identity as fallback name", async () => {
-    const c = await sqliteDb.createProviderConnection({
-      provider: "github",
-      authType: "oauth",
-      accessToken: "tok",
-      providerSpecificData: { githubLogin: "octocat" },
-    });
-
-    expect(c.name).toBe("octocat");
-    const back = await sqliteDb.getProviderConnectionById(c.id);
-    expect(back.name).toBe("octocat");
-  });
-
   it("providerNodes: CRUD", async () => {
     const n = await sqliteDb.createProviderNode({ type: "openai", name: "Test", baseUrl: "https://api.test", apiType: "openai" });
     expect(n.id).toBeDefined();
@@ -238,15 +127,42 @@ describe("DB SQLite layer — public API parity", () => {
     await sqliteDb.deleteProxyPool(p2.id);
   });
 
-  it("combos: CRUD", async () => {
-    const c = await sqliteDb.createCombo({ name: "combo1", models: ["m1", "m2"], kind: "fallback" });
+  it("proxyPoolFitness: atomic scopes, provider clearing, pool deletion, roundtrip", async () => {
+    const pool = await sqliteDb.createProxyPool({ name: "fitness", proxyUrl: "http://fitness" });
+    const until = Date.now() + 60000;
+    const first = await sqliteDb.upsertProxyPoolFitness(pool.id, "freebuff::model-a", until, "limited");
+    expect(first).toMatchObject({ poolId: pool.id, scope: "freebuff::model-a", until, reason: "limited" });
+    const updated = await sqliteDb.upsertProxyPoolFitness(pool.id, "freebuff::model-a", until + 1, "updated");
+    expect(updated).toMatchObject({ until: until + 1, reason: "updated" });
+    await sqliteDb.upsertProxyPoolFitness(pool.id, "freebuff::*", until, "provider");
+    const all = await sqliteDb.listProxyPoolFitness();
+    expect(all.filter((entry) => entry.poolId === pool.id)).toHaveLength(2);
+
+    await sqliteDb.clearProxyPoolFitness("freebuff");
+    expect(await sqliteDb.listProxyPoolFitness(pool.id)).toEqual([]);
+    await sqliteDb.upsertProxyPoolFitness(pool.id, "openai::model", until, "retry");
+    const snapshot = await sqliteDb.exportDb();
+    expect(snapshot.proxyPoolFitness).toEqual(expect.arrayContaining([
+      expect.objectContaining({ poolId: pool.id, scope: "openai::model" }),
+    ]));
+    await sqliteDb.importDb(snapshot);
+    expect(await sqliteDb.listProxyPoolFitness(pool.id)).toHaveLength(1);
+
+    await sqliteDb.deleteProxyPool(pool.id);
+    expect(await sqliteDb.listProxyPoolFitness(pool.id)).toEqual([]);
+  });
+
+  it("combos: CRUD persists context_length", async () => {
+    const c = await sqliteDb.createCombo({ name: "combo1", models: ["m1", "m2"], kind: "fallback", context_length: 128000 });
     expect(c.id).toBeDefined();
-    expect(c.models).toEqual(["m1", "m2"]);
+    expect(c.context_length).toBe(128000);
     const byName = await sqliteDb.getComboByName("combo1");
     expect(byName.id).toBe(c.id);
-    await sqliteDb.updateCombo(c.id, { models: ["m3"] });
+    expect(byName.context_length).toBe(128000);
+    await sqliteDb.updateCombo(c.id, { models: ["m3"], context_length: 64000 });
     const updated = await sqliteDb.getComboById(c.id);
     expect(updated.models).toEqual(["m3"]);
+    expect(updated.context_length).toBe(64000);
     expect(await sqliteDb.deleteCombo(c.id)).toBe(true);
   });
 
@@ -261,25 +177,12 @@ describe("DB SQLite layer — public API parity", () => {
   });
 
   it("customModels: add/list/delete with dedupe", async () => {
-    const ok1 = await sqliteDb.addCustomModel({
-      providerAlias: "p1",
-      id: "m1",
-      type: "llm",
-      name: "Model 1",
-      caps: { contextWindow: 100000, vision: true },
-    });
-    const dup = await sqliteDb.addCustomModel({
-      providerAlias: "p1",
-      id: "m1",
-      type: "llm",
-      caps: { maxOutput: 8000 },
-    });
+    const ok1 = await sqliteDb.addCustomModel({ providerAlias: "p1", id: "m1", type: "llm", name: "Model 1" });
+    const dup = await sqliteDb.addCustomModel({ providerAlias: "p1", id: "m1", type: "llm" });
     expect(ok1).toBe(true);
     expect(dup).toBe(false);
     const list = await sqliteDb.getCustomModels();
-    expect(list.find((m) => m.id === "m1")).toMatchObject({
-      caps: { contextWindow: 100000, maxOutput: 8000, vision: true },
-    });
+    expect(list.find((m) => m.id === "m1")).toBeDefined();
     await sqliteDb.deleteCustomModel({ providerAlias: "p1", id: "m1" });
     const after = await sqliteDb.getCustomModels();
     expect(after.find((m) => m.id === "m1")).toBeUndefined();

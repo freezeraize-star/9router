@@ -1,38 +1,42 @@
+Dưới đây là bản dịch tiếng Việt của tài liệu Markdown, giữ nguyên toàn bộ cú pháp và cấu trúc kỹ thuật.
+
 <div align="center">
   <img src="../images/9router.png?1" alt="Bảng điều khiển 9Router" width="800"/>
-  
-  # 9Router - Free AI Router & Token Saver
-  
-  **Không bao giờ ngừng code. Tiết kiệm 20-40% token với RTK + tự động dự phòng sang các mô hình AI MIỄN PHÍ & giá rẻ.**
-  
-  **Kết nối tất cả công cụ AI Code (Claude Code, Codex, Cursor, Cline, Copilot, Antigravity...) tới 40+ Nhà cung cấp AI & 100+ Mô hình.**
-  
-  [![npm](https://img.shields.io/npm/v/9router.svg)](https://www.npmjs.com/package/9router)
-  [![Downloads](https://img.shields.io/npm/dm/9router.svg)](https://www.npmjs.com/package/9router)
-  [![License](https://github.com/decolua/9router/blob/main/LICENSE)](https://github.com/decolua/9router/blob/main/LICENSE)
-  
-  [🚀 Bắt đầu nhanh](#-quick-start) • [💡 Tính năng](#-key-features) • [📖 Cài đặt](#-setup-guide) • [🌐 Website](https://9router.com)
+
+  # 9Router - Free AI Router
+
+  **Không bao giờ ngừng code. Tự động định tuyến tới các mô hình AI MIỄN PHÍ & giá rẻ với cơ chế dự phòng thông minh.**
+
+  **Nhà cung cấp AI Miễn cho OpenClaw.**
+
+  <p align="center">
+    <img src="../public/providers/openclaw.webp" alt="OpenClaw" width="80"/>
+  </p>
+
+  [![npm](https://img.shields.io/npm/v/vansrouter.svg)](https://www.npmjs.com/package/vansrouter)
+  [![Downloads](https://img.shields.io/npm/dm/vansrouter.svg)](https://www.npmjs.com/package/vansrouter)
+  [![License](https://img.shields.io/npm/l/vansrouter.svg)](https://github.com/Vanszs/VansRouter/blob/main/LICENSE)
+
+  [🚀 Bắt đầu nhanh](#-quick-start) • [💡 Tính năng](#-key-features) • [📖 Cài đặt](#-setup-guide) • [🌐 Website](https://vansrouter.com)
 </div>
 
 ---
 
 ## 🤔 Tại sao chọn 9Router?
 
-**Ngừng lãng phí tiền bạc, token và không bao giờ lo chạm giới hạn (rate limit):**
+**Ngừng lãng phí tiền bạc và gặp phải giới hạn:**
 
 - ❌ Hạn mức gói đăng ký hết hạn mỗi tháng mà không dùng hết
-- ❌ Giới hạn tốc độ (rate limit) làm gián đoạn công việc mid-coding
-- ❌ Kết quả của công cụ (git diff, grep, ls...) ngốn rất nhiều token
-- ❌ Chi phí API đắt đỏ ($20-50/tháng cho từng nhà cung cấp)
-- ❌ Phải chuyển đổi thủ công giữa các nhà cung cấp AI
+- ❌ Giới hạn tốc độ (rate limit) ngăn bạn giữaừng khi code
+- ❌ Các API đắt đỏ ($20-50/tháng cho mỗi nhà cung cấp)
+- ❌ Phải chuyển đổi thủ công giữa các nhà cung cấp
 
 **9Router giải quyết vấn đề này:**
 
-- ✅ **RTK Token Saver** - Tự động nén nội dung `tool_result`, tiết kiệm 20-40% token trên mỗi request
-- ✅ **Tối đa hóa gói đăng ký** - Theo dõi hạn mức, tận dụng triệt để trước khi reset
-- ✅ **Tự động dự phòng (Auto Fallback)** - Gói đăng ký → Giá rẻ → Miễn phí, không lo downtime
-- ✅ **Đa tài khoản (Multi-account)** - Xoay vòng (round-robin) các tài khoản cho mỗi nhà cung cấp
-- ✅ **Phổ quát (Universal)** - Hoạt động với Claude Code, Codex, Cursor, Cline, Antigravity và mọi công cụ CLI
+- ✅ **Tối đa hóa gói đăng ký** - Theo dõi hạn mức, sử dụng từng bit trước khi reset
+- ✅ **Tự động dự phòng** - Gói đăng ký → Giá rẻ → Miễn phí, thời gian chết bằng không
+- ✅ **Đa tài khoản** - Vòng tròn (round-robin) các tài khoản của mỗi nhà cung cấp
+- ✅ **Phổ quát** - Hoạt động với Claude Code, Codex, Gemini CLI, Cursor, Cline, bất kỳ công cụ CLI nào
 
 ---
 
@@ -40,26 +44,25 @@
 
 ```
 ┌─────────────┐
-│  Công cụ    │  (Claude Code, Codex, OpenClaw, Cursor, Cline, Antigravity...)
-│  CLI AI     │
+│  Your CLI   │  (Claude Code, Codex, Gemini CLI, OpenClaw, Cursor, Cline...)
+│   Tool      │
 └──────┬──────┘
        │ http://localhost:20128/v1
        ↓
-┌─────────────────────────────────────────────┐
-│           9Router (Smart Router)            │
-│  • RTK Token Saver (nén tool_result token) │
-│  • Dịch chuyển định dạng (OpenAI ↔ Claude) │
-│  • Quota tracking (theo dõi hạn mức)       │
-│  • Tự động làm mới OAuth Token             │
-└──────┬──────────────────────────────────────┘
+┌────────────────────────────────────────┐
+│           9Router (Smart Router)        │
+│  • Format translation (OpenAI ↔ Claude) │
+│  • Quota tracking                       │
+│  • Auto token refresh                   │
+└──────┬──────────────────────────────────┘
        │
-       ├─→ [Tier 1: GÓI ĐĂNG KÝ] Claude Code, Codex, GitHub Copilot
-       │   ↓ hết hạn mức quota
-       ├─→ [Tier 2: GIÁ RẺ] GLM ($0.6/1M), MiniMax ($0.2/1M)
-       │   ↓ chạm ngân sách
-       └─→ [Tier 3: MIỄN PHÍ] Kiro AI, OpenCode Free, Vertex AI ($300 credits)
+       ├─→ [Tier 1: SUBSCRIPTION] Claude Code, Codex, Gemini CLI
+       │   ↓ quota exhausted
+       ├─→ [Tier 2: CHEAP] GLM ($0.6/1M), MiniMax ($0.2/1M)
+       │   budget limit
+       └─→ [Tier 3: FREE] iFlow, Qwen, Kiro (unlimited)
 
-Kết quả: Không bao giờ ngừng code, chi phí tối thiểu + tiết kiệm 20-40% token qua RTK
+Result: Never stop coding, minimal cost
 ```
 
 ---
@@ -73,26 +76,26 @@ npm install -g 9router
 9router
 ```
 
-🎉 Bảng điều khiển (Dashboard) sẽ tự động mở tại `http://localhost:20128`
+🎉 Bảng điều khiển mở tại `http://localhost:20128`
 
 **2. Kết nối nhà cung cấp MIỄN PHÍ (không cần đăng ký):**
 
-Bảng điều khiển → Providers → Kết nối **Kiro AI** (~50 credits/tháng miễn phí: Claude 4.5 + GLM-5 + MiniMax) hoặc **OpenCode Free** (không cần auth) → Xong!
+Bảng điều khiển → Providers -> Kết nối **ude Code** hoặc **Antigravity** -> Đăng nhập OAuth -> Xong!
 
 **3. Sử dụng trong công cụ CLI của bạn:**
 
 ```
-Cài đặt Claude Code/Codex/OpenClaw/Cursor/Cline/Antigravity:
+Cài đặt Claude Code/Codex/Gemini CLI/OpenClaw/Cursor/Cline:
   Endpoint: http://localhost:20128/v1
   API Key: [sao chép từ bảng điều khiển]
-  Model: kr/claude-sonnet-4.5
+  Model: if/kimi-k2-thinking
 ```
 
-**Thế là xong!** Bắt đầu code ngay với các mô hình AI MIỄN PHÍ.
+**Xong rồi!** Bắt đầu code với các mô hình AI MIỄN PHÍ.
 
-**Phương án khác: chạy từ mã nguồn (repository này):**
+**Phương án khác: chạy từ nguồn (k lưu trữ này):**
 
-Gói kho lưu trữ này là riêng tư (`9router-app`), vì vậy việc chạy từ nguồn/Docker là cách phát triển cục bộ mặc định.
+Gói kho lưu trữ này là riêng tư (`vansrouter-app`), vì vậy việc thực thi nguồn/Docker là đường dẫn phát triển cục bộ dự kiến.
 
 ```bash
 cp .env.example .env
@@ -108,18 +111,17 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
 ```
 
 URL mặc định:
-- Bảng điều khiển Dashboard: `http://localhost:20128/dashboard`
+- Bảng điều khiển: `http://localhost:20128/dashboard`
 - API tương thích OpenAI: `http://localhost:20128/v1`
 
 ---
 
-
 ## 🎥 Hướng dẫn Video
 
 <div align="center">
-  
+
 ### 📺 Hướng dẫn thiết lập hoàn chỉnh - 9Router + Claude Code MIỄN PHÍ
-  
+
 [![Thiết lập 9Router + Claude Code](https://img.youtube.com/vi/raEyZPg5xE0/maxresdefault.jpg)](https://www.youtube.com/watch?v=raEyZPg5xE0)
 
 **🎬 Xem hướng dẫn từng đầy đủ:**
@@ -144,53 +146,53 @@ URL mặc định:
   <table>
     <tr>
       <td align="center" width="120">
-        <img src="../public/providers/claude.png" width="60" alt="Claude Code"/><br/>
+        <img src="../public/providers/claude.webp" width="60" alt="Claude Code"/><br/>
         <b>Claude-Code</b>
       </td>
       <td align="center" width="120">
-        <img src="../public/providers/openclaw.png" width="60" alt="OpenClaw"/><br/>
+        <img src="../public/providers/openclaw.webp" width="60" alt="OpenClaw"/><br/>
         <b>OpenClaw</b>
       </td>
       <td align="center" width="120">
-        <img src="../public/providers/codex.png" width="60" alt="Codex"/><br/>
+        <img src="../public/providers/codex.webp" width="60" alt="Codex"/><br/>
         <b>Codex</b>
       </td>
       <td align="center" width="120">
-        <img src="../public/providers/opencode.png" width="60" alt="OpenCode"/><br/>
+        <img src="../public/providers/opencode.webp" width="60" alt="OpenCode"/><br/>
         <b>OpenCode</b>
       </td>
       <td align="center" width="120">
-        <img src="../public/providers/cursor.png" width="60" alt="Cursor"/><br/>
+        <img src="../public/providers/cursor.webp" width="60" alt="Cursor"/><br/>
         <b>Cursor</b>
       </td>
       <td align="center" width="120">
-        <img src="../public/providers/antigravity.png" width="60" alt="Antigravity"/><br/>
+        <img src="../public/providers/antigravity.webp" width="60" alt="Antigravity"/><br/>
         <b>Antigravity</b>
       </td>
     </tr>
     <tr>
       <td align="center" width="120">
-        <img src="../public/providers/cline.png" width="60" alt="Cline"/><br/>
+        <img src="../public/providers/cline.webp" width="60" alt="Cline"/><br/>
         <b>Cline</b>
       </td>
       <td align="center" width="120">
-        <img src="../public/providers/continue.png" width="60" alt="Continue"/><br/>
+        <img src="../public/providers/continue.webp" width="60" alt="Continue"/><br/>
         <b>Continue</b>
       </td>
       <td align="center" width="120">
-        <img src="../public/providers/droid.png" width="60" alt="Droid"/><br/>
+        <img src="../public/providers/droid.webp" width="60" alt="Droid"/><br/>
         <b>Droid</b>
       </td>
       <td align="center" width="120">
-        <img src="../public/providers/roo.png" width="60" alt="Roo"/><br/>
+        <img src="../public/providers/roo.webp" width="60" alt="Roo"/><br/>
         <b>Roo</b>
       </td>
       <td align="center" width="120">
-        <img src="../public/providers/copilot.png" width="60" alt="Copilot"/><br/>
+        <img src="../public/providers/copilot.webp" width="60" alt="Copilot"/><br/>
         <b>Copilot</b>
       </td>
       <td align="center" width="120">
-        <img src="../public/providers/kilocode.png" width="60" alt="Kilo Code"/><br/>
+        <img src="../public/providers/kilocode.webp" width="60" alt="Kilo Code"/><br/>
         <b>Kilo Code</b>
       </td>
     </tr>
@@ -207,23 +209,23 @@ URL mặc định:
   <table>
     <tr>
       <td align="center" width="120">
-        <img src="../public/providers/claude.png" width="60" alt="Claude Code"/><br/>
+        <img src="../public/providers/claude.webp" width="60" alt="Claude Code"/><br/>
         <b>Claude-Code</b>
       </td>
       <td align="center" width="120">
-        <img src="../public/providers/antigravity.png" width="60" alt="Antigravity"/><br/>
+        <img src="../public/providers/antigravity.webp" width="60" alt="Antigravity"/><br/>
         <b>Antigravity</b>
       </td>
       <td align="center" width="120">
-        <img src="../public/providers/codex.png" width="60" alt="Codex"/><br/>
+        <img src="../public/providers/codex.webp" width="60" alt="Codex"/><br/>
         <b>Codex</b>
       </td>
       <td align="center" width="120">
-        <img src="../public/providers/github.png" width="60" alt="GitHub"/><br/>
+        <img src="../public/providers/github.webp" width="60" alt="GitHub"/><br/>
         <b>GitHub</b>
       </td>
       <td align="center" width="120">
-        <img src="../public/providers/cursor.png" width="60" alt="Cursor"/><br/>
+        <img src="../public/providers/cursor.webp" width="60" alt="Cursor"/><br/>
         <b>Cursor</b>
       </td>
     </tr>
@@ -236,22 +238,22 @@ URL mặc định:
   <table>
     <tr>
       <td align="center" width="150">
-        <img src="../public/providers/iflow.png" width="70" alt="iFlow"/><br/>
+        <img src="../public/providers/iflow.webp" width="70" alt="iFlow"/><br/>
         <b>iFlow AI</b><br/>
         <sub>8+ mô hình • Không giới hạn</sub>
       </td>
       <td align="center" width="150">
-        <img src="../public/providers/qwen.png" width="70" alt="Qwen"/><br/>
+        <img src="../public/providers/qwen.webp" width="70" alt="Qwen"/><br/>
         <b>Qwen Code</b><br/>
         <sub>3+ mô hình • Không giới hạn</sub>
       </td>
       <td align="center" width="150">
-        <img src="../public/providers/gemini-cli.png" width="70" alt="Gemini CLI"/><br/>
+        <img src="../public/providers/gemini-cli.webp" width="70" alt="Gemini CLI"/><br/>
         <b>Gemini CLI</b><br/>
         <sub>180K/tháng MIỄN PHÍ</sub>
       </td>
       <td align="center" width="150">
-        <img src="../public/providers/kiro.png" width="70" alt="Kiro"/><br/>
+        <img src="../public/providers/kiro.webp" width="70" alt="Kiro"/><br/>
         <b>Kiro AI</b><br/>
         <sub>Claude • Không giới hạn</sub>
       </td>
@@ -265,79 +267,79 @@ URL mặc định:
   <table>
     <tr>
       <td align="center" width="100">
-        <img src="../public/providers/openrouter.png" width="50" alt="OpenRouter"/><br/>
+        <img src="../public/providers/openrouter.webp" width="50" alt="OpenRouter"/><br/>
         <sub>OpenRouter</sub>
       </td>
       <td align="center" width="100">
-        <img src="../public/providers/glm.png" width="50" alt="GLM"/><br/>
+        <img src="../public/providers/glm.webp" width="50" alt="GLM"/><br/>
         <sub>GLM</sub>
       </td>
       <td align="center" width="100">
-        <img src="../public/providers/kimi.png" width="50" alt="Kimi"/><br/>
+        <img src="../public/providers/kimi.webp" width="50" alt="Kimi"/><br/>
         <sub>Kimi</sub>
       </td>
       <td align="center" width="100">
-        <img src="../public/providers/minimax.png" width="50" alt="MiniMax"/><br/>
+        <img src="../public/providers/minimax.webp" width="50" alt="MiniMax"/><br/>
         <sub>MiniMax</sub>
       </td>
       <td align="center" width="100">
-        <img src="../public/providers/openai.png" width="50" alt="OpenAI"/><br/>
+        <img src="../public/providers/openai.webp" width="50" alt="OpenAI"/><br/>
         <sub>OpenAI</sub>
       </td>
       <td align="center" width="100">
-        <img src="../public/providers/anthropic.png" width="50" alt="Anthropic"/><br/>
+        <img src="../public/providers/anthropic.webp" width="50" alt="Anthropic"/><br/>
         <sub>Anthropic</sub>
       </td>
     </tr>
     <tr>
       <td align="center" width="100">
-        <img src="../public/providers/gemini.png" width="50" alt="Gemini"/><br/>
+        <img src="../public/providers/gemini.webp" width="50" alt="Gemini"/><br/>
         <sub>Gemini</sub>
       </td>
       <td align="center" width="100">
-        <img src="../public/providers/deepseek.png" width="50" alt="DeepSeek"/><br/>
+        <img src="../public/providers/deepseek.webp" width="50" alt="DeepSeek"/><br/>
         <sub>DeepSeek</sub>
       </td>
       <td align="center" width="100">
-        <img src="../public/providers/groq.png" width="50" alt="Groq"/><br/>
+        <img src="../public/providers/groq.webp" width="50" alt="Groq"/><br/>
         <sub>Groq</sub>
       </td>
       <td align="center" width="100">
-        <img src="../public/providers/xai.png" width="50" alt="xAI"/><br/>
+        <img src="../public/providers/xai.webp" width="50" alt="xAI"/><br/>
         <sub>xAI</sub>
       </td>
       <td align="center" width="100">
-        <img src="../public/providers/mistral.png" width="50" alt="Mistral"/><br/>
+        <img src="../public/providers/mistral.webp" width="50" alt="Mistral"/><br/>
         <sub>Mistral</sub>
       </td>
       <td align="center" width="100">
-        <img src="../public/providers/perplexity.png" width="50" alt="Perplexity"/><br/>
+        <img src="../public/providers/perplexity.webp" width="50" alt="Perplexity"/><br/>
         <sub>Perplexity</sub>
       </td>
     </tr>
     <tr>
       <td align="center" width="100">
-        <img src="../public/providers/together.png" width="50" alt="Together"/><br/>
+        <img src="../public/providers/together.webp" width="50" alt="Together"/><br/>
         <sub>Together AI</sub>
       </td>
       <td align="center" width="100">
-        <img src="../public/providers/fireworks.png" width="50" alt="Fireworks"/><br/>
+        <img src="../public/providers/fireworks.webp" width="50" alt="Fireworks"/><br/>
         <sub>Fireworks</sub>
       </td>
       <td align="center" width="100">
-        <img src="../public/providers/cerebras.png" width="50" alt="Cerebras"/><br/>
+        <img src="../public/providers/cerebras.webp" width="50" alt="Cerebras"/><br/>
         <sub>Cerebras</sub>
       </td>
       <td align="center" width="100">
-        <img src="../public/providers/cohere.png" width="50" alt="Cohere"/><br/>
+        <img src="../public/providers/cohere.webp" width="50" alt="Cohere"/><br/>
         <sub>Cohere</sub>
       </td>
       <td align="center" width="100">
-        <img src="../public/providers/nvidia.png" width="50" alt="NVIDIA"/><br/>
+        <img src="../public/providers/nvidia.webp" width="50" alt="NVIDIA"/><br/>
         <sub>NVIDIA</sub>
       </td>
       <td align="center" width="100">
-        <img src="../public/providers/siliconflow.png" width="50" alt="SiliconFlow"/><br/>
+        <img src="../public/providers/siliconflow.webp" width="50" alt="SiliconFlow"/><br/>
         <sub>SiliconFlow</sub>
       </td>
     </tr>
@@ -441,14 +443,14 @@ Dịch chuyển liền mạch giữa các định dạng:
 - Tối ưu hóa chi tiêu AI của bạn
 
 > **💡AN TRỌNG - Hiểu về Chi phí trên Bảng điều khiển:**
-> 
-> "Chi phí" hiển thị trong Phân tích sử dụng là **chỉ để theo dõi và so sánh**. 
+>
+> "Chi phí" hiển thị trong Phân tích sử dụng là **chỉ để theo dõi và so sánh**.
 > Bản thân 9Router **không bao giờ thu phí** bạn bất cứ thứ gì. Bạn chỉ trả tiền trực tiếp cho các nhà cung cấp (nếu sử dụng dịch vụ trả phí).
-> 
-> **Ví dụ:** Nếu bảng điều khiển của bạn hiển thị "tổng chi phí $290" trong khi sử dụng các mô hìnhFlow, điều này đại diện cho 
+>
+> **Ví dụ:** Nếu bảng điều khiển của bạn hiển thị "tổng chi phí $290" trong khi sử dụng các mô hìnhFlow, điều này đại diện cho
 > số tiền bạn sẽ phải trả nếu sử dụng API trả phí trực tiếp. Chi phí thực tế của bạn = **$0** (iFlow miễn phí không giới hạn).
-> 
-> Hãy coi nó như một "trình theo dõi tiết kiệm" cho thấy bạn đang tiết kiệm được bao nhiêu bằng cách sử dụng các mô hình miễn phí hoặc 
+>
+> Hãy coi nó như một "trình theo dõi tiết kiệm" cho thấy bạn đang tiết kiệm được bao nhiêu bằng cách sử dụng các mô hình miễn phí hoặc
 > định tuyến qua 9Router!
 
 ### 🌐 Triển khai ở bất cứ đâu
@@ -485,10 +487,10 @@ Dịch chuyển liền mạch giữa các định dạng:
 
 **Thực tế Thanh toán 9Router:**
 
-✅ **Phần mềm 9Router = MIỄN PHÍ mãi mãi** (mã nguồn mở, không bao giờ thu phí)  
-✅ **"Chi phí" trên bảng điều khiển = Chỉ để Hiển thị/Theo dõi** (không phải hóa đơn thực tế)  
- **Bạn trả tiền trực tiếp cho nhà cung cấp** (gói đăng ký hoặc phí API)  
-✅ **Nhà cung cấp MIỄN PHÍ vẫn MIỄN PHÍ** (iFlow, Kiro, Qwen = $0 không giới hạn)  
+✅ **Phần mềm 9Router = MIỄN PHÍ mãi mãi** (mã nguồn mở, không bao giờ thu phí)
+✅ **"Chi phí" trên bảng điều khiển = Chỉ để Hiển thị/Theo dõi** (không phải hóa đơn thực tế)
+ **Bạn trả tiền trực tiếp cho nhà cung cấp** (gói đăng ký hoặc phí API)
+✅ **Nhà cung cấp MIỄN PHÍ vẫn MIỄN PHÍ** (iFlow, Kiro, Qwen = $0 không giới hạn)
 ❌ **9Router không bao giờ gửi hóa đơn** hoặc tính phí thẻ của bạn
 
 **Cách Hoạt động của Hiển thị Chi phí:**
@@ -615,11 +617,11 @@ Màn hình chi phí là một "trình theo dõi tiết kiệm" để giúp bạn
 <details>
 <summary><b>🆓 Các nhà cung cấp MIỄN PHÍ có thực sự không giới hạn không?</b></summary>
 
-**Có!** Các nhà cung cấp được đánh dấu là MIỄN PHÍ (iFlow, Kiro, Qwen) thực sự không giới hạn với **không có phí ẩn**. 
+**Có!** Các nhà cung cấp được đánh dấu là MIỄN PHÍ (iFlow, Kiro, Qwen) thực sự không giới hạn với **không có phí ẩn**.
 
 Đây là các dịch vụ miễn phí được cung cấp bởi các công ty tương ứng:
 - **iFlow**: Truy cập miễn phí không giới hạn vào hơn 8 mô hình qua OAuth
-- **Kiro**: Các mô hình Claude miễn phí không giới hạn qua AWS Builder ID  
+- **Kiro**: Các mô hình Claude miễn phí không giới hạn qua AWS Builder ID
 - **Qwen**: Truy cập miễn phí không giới hạn vào các mô hình Qwen qua xác thực thiết bị
 
 9Router chỉ định tuyến yêu cầu của bạn đến họ - không có "cạm bẫy" hay thanh toán trong tương lai. Đó là các dịch vụ thực sự miễn phí, và 9Router giúp chúng dễ sử dụng với hỗ trợ dự phòng.
@@ -945,7 +947,7 @@ Model: cc/claude-opus-4-6
 
 ```bash
 # Clone và cài đặt
-git clone https://github.com/decolua/9router.git
+git clone https://github.com/Vanszs/VansRouter.git
 cd 9router
 npm install
 npm run build
@@ -958,7 +960,7 @@ export PORT="20128"
 export HOSTNAME="0.0.0.0"
 export NODE_ENV="production"
 export NEXT_PUBLIC_BASE_URL="http://localhost:20128"
-export NEXT_PUBLIC_CLOUD_URL="https://9router.com"
+export NEXT_PUBLIC_CLOUD_URL="https://vansrouter.com"
 export API_KEY_SECRET="endpoint-proxy-api-key-secret"
 export MACHINE_ID_SALT="endpoint-proxy-salt"
 
@@ -1023,9 +1025,9 @@ docker stop 9router && docker rm 9router
 | `HOSTNAME` | framework default | Bind host (Docker mặc định là `0.0.0.0`) |
 | `NODE_ENV` | runtime default | Đặt `production` để triển khai |
 | `BASE_URL` | `http://localhost:20128` | URL cơ sở nội bộ phía máy chủ được sử dụng bởi các tác vụ đồng bộ đám mây |
-| `CLOUD_URL` | `https://9router.com` | URL cơ sở endpoint đồng bộ đám mây phía máy chủ |
+| `CLOUD_URL` | `https://vansrouter.com` | URL cơ sở endpoint đồng bộ đám mây phía máy chủ |
 | `NEXT_PUBLIC_BASE_URL` | `http://localhost:3000` | URL cơ sở tương thích ngược/công khai (ưu tiên `BASE_URL` cho runtime máy chủ) |
-| `NEXT_PUBLIC_CLOUD_URL` | `https://9router.com` | URL đám mây tương thích ngược/công khai (ưu tiên `CLOUD_URL` cho runtime máy chủ) |
+| `NEXT_PUBLIC_CLOUD_URL` | `https://vansrouter.com` | URL đám mây tương thích ngược/công khai (ưu tiên `CLOUD_URL` cho runtime máy chủ) |
 | `API_KEY_SECRET` | `endpoint-proxy-api-key-secret` | B mật HMAC cho các API key được tạo |
 | `MACHINE_ID_SALT` | `endpoint-proxy-salt` | Salt cho việc băm ID máy ổn định |
 | `ENABLE_REQUEST_LOGS` | `false` | Bật log request/response dưới `logs/` |
@@ -1119,11 +1121,11 @@ Ghi chú:
 
 **Lỗi đồng bộ đám mây**
 - Xác minh `BASE_URL` trỏ đến phiên bản đang chạy của bạn (ví dụ: `http://localhost:20128`)
-- Xác minh `CLOUD_URL` trỏ đến endpoint đám mây dự kiến của bạn (ví dụ: `https://9router.com`)
+- Xác minh `CLOUD_URL` trỏ đến endpoint đám mây dự kiến của bạn (ví dụ: `https://vansrouter.com`)
 - Giữ các giá trị `NEXT_PUBLIC_*` phù hợp với giá trị phía máy chủ khi có thể.
 
 **Endpoint đám mây `stream=false` trả về 500 (`Unexpected token 'd'...`)**
-- Triệu chứng thường xuất hiện trên endpoint đám mây công khai (`https://9router.com/v1`) cho các lệnh gọi không phát trực tiếp (non-streaming).
+- Triệu chứng thường xuất hiện trên endpoint đám mây công khai (`https://vansrouter.com/v1`) cho các lệnh gọi không phát trực tiếp (non-streaming).
 - Nguyên nhân gốc rễ: upstream trả về payload SSE (`data: ...`) trong khi client mong đợi JSON.
 -ải pháp thay thế: sử dụng `stream=true` cho các lệnh gọi trực tiếp đến đám mây.
 - Runtime 9Router cục bộ bao gồm dự phòng SSE→JSON cho các lệnh gọi không phát trực tiếp khi upstream trả về `text/event-stream`.
@@ -1197,7 +1199,7 @@ Authorization: Bearer your-api-key
 - `tester/security/test-docker-hardening.sh`
   - Build image Docker và xác thực các kiểm tra hardening (`/api/cloud/auth` auth guard, `REQUIRE_API_KEY`, hành vi cookie xác thực bảo).
 - `tester/security/test-cloud-openai-compatible.sh`
-  - Gửi một yêu cầu tương thích OpenAI trực tiếp đến endpoint đám mây (`https://9router.com/v1/chat/completions`) với mô hình/key được cung cấp.
+  - Gửi một yêu cầu tương thích OpenAI trực tiếp đến endpoint đám mây (`https://vansrouter.com/v1/chat/completions`) với mô hình/key được cung cấp.
 - `tester/security/test-cloud-sync-and-call.sh`
   - Quy trình end-to-end: tạo key cục bộ -> bật/đồng bộ đám mây -> gọi endpoint đám mây với thử lại.
   - Bao gồm kiểm tra dự phòng với `stream=true` để phân biệt lỗi xác thực với các vấn đề phân tích phát trực tiếp.
@@ -1217,7 +1219,7 @@ Hành vi dự kiến từ việc xác thực gần đây:
 
 - cục bộ (`http://127.0.0.1:20128/v1/chat/completions`): hoạt động với `stream=false` và `stream=true`.
 - Runtime Docker (cùng đường dẫn API được expose bởi container): các kiểm tra hardening đạt, cloud auth guard hoạt động, chế độ API key nghiêm ngặt hoạt động khi được bật.
-- Endpoint đám mây công khai (`https://9router.com/v1/chat/completions`):
+- Endpoint đám mây công khai (`https://vansrouter.com/v1/chat/completions`):
   - `stream=true`: dự kiến thành công (trả về các khối SSE).
   - `stream=false`: có thể thất bại với `500` + lỗi phân tích (`Unexpected token 'd'`) khi upstream trả về nội dung SSE cho đường dẫn client không phát trực tiếp.
 
@@ -1255,9 +1257,9 @@ Tài liệu tham khảo kiến trúc đầy đủ: [`docs/ARCHITECTURE.md`](../d
 
 ## 📧 Hỗ trợ
 
-- **Website**: [9router.com](https://9router.com)
-- **GitHub**: [github.com/decolua/9](https://github.com/decolua/9router)
-- **Issues**: [github.com/decolua/9router/issues](https://github.com/decolua/9router/issues)
+- **Website**: [9router.com](https://vansrouter.com)
+- **GitHub**: [github.com/decolua/9](https://github.com/Vanszs/VansRouter)
+- **Issues**: [github.com/decolua/9router/issues](https://github.com/Vanszs/VansRouter/issues)
 
 ---
 
@@ -1265,7 +1267,7 @@ Tài liệu tham khảo kiến trúc đầy đủ: [`docs/ARCHITECTURE.md`](../d
 
 Cảm ơn tất cả những người đã đóng góp giúp 9Router tốt hơn!
 
-[![Contributors](https://contrib.rocks/image?repo=decolua/9router&max=100&columns=20&anon=1)](https://github.com/decolua/9router/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=decolua/9router&max=100&columns=20&anon=1)](https://github.com/Vanszs/VansRouter/graphs/contributors)
 
 ---
 
@@ -1281,7 +1283,7 @@ Cảm ơn tất cả những người đã đóng góp giúp 9Router tốt hơn!
 4. Push lên nhánh (`git push origin feature/amazing-feature`)
 5. Mở một Pull Request
 
-Xem [Pull Requests](https://github.com/decolua/9router/pulls) để biết hướng dẫn chi tiết.
+Xem [Pull Requests](https://github.com/Vanszs/VansRouter/pulls) để biết hướng dẫn chi tiết.
 
 ---
 

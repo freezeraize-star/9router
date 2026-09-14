@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
 
 const projectRoot = dirname(fileURLToPath(import.meta.url));
 // CLI bundling needs workspace root so tracing includes hoisted node_modules (slim ~50MB).
@@ -13,21 +14,18 @@ const proxyClientMaxBodySize = process.env.NINEROUTER_PROXY_CLIENT_MAX_BODY_SIZE
 const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
   output: "standalone",
-  // `open` must stay external. It derives its own directory from `import.meta.url`, and
-  // webpack replaces that with the absolute path of the BUILD machine as a string literal.
-  // A release built on macOS therefore ships `file:///Users/.../open/index.js`, which
-  // `fileURLToPath` rejects on Windows ("File URL path must be absolute" — no drive
-  // letter). That throw happens at module scope, so every consumer of `open` dies on
-  // import — including xAI/Grok token refresh, which loads the OAuth service that imports
-  // it. Keeping it external preserves the real `import.meta.url` at runtime.
-  serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite", "open"],
+  serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite", "dompurify", "chalk"],
   turbopack: {
     root: tracingRoot
   },
   outputFileTracingRoot: tracingRoot,
   outputFileTracingExcludes: {
-    "*": ["./gitbook/**/*"]
+    "*": ["./gitbook/**/*", "./.git/**/*", "./tests/**/*", "./docs/**/*", "./.fakehome/**/*"]
   },
+  // Disable Next.js built-in gzip/br compression so SSE chunks are flushed
+  // immediately to the client instead of being batched by the compressor.
+  // Express/nginx handles compression at the edge if needed.
+  compress: false,
   images: {
     unoptimized: true
   },
@@ -49,6 +47,20 @@ const nextConfig = {
         path: false,
       };
     }
+    // Mark bun: and node:sqlite as ignored — they're runtime-only,
+    // webpack can't bundle them. serverExternalPackages handles named packages
+    // but dynamic `import("bun:sqlite")` / `import("node:sqlite")` still leak
+    // into the client graph. IgnorePlugin via createRequire (webpack is
+    // transitive dep via next, not a direct dep we can ESM-import).
+    // NOTE: only ignore bun:sqlite and node:sqlite — NOT node:fs/node:path
+    // which ARE needed server-side by next/standalone.
+    const require = createRequire(import.meta.url);
+    const webpack = require("webpack");
+    config.plugins = [...(config.plugins || []),
+      new webpack.IgnorePlugin({
+        resourceRegExp: /^(bun:sqlite|node:sqlite)$/,
+      }),
+    ];
     // Exclude non-source dirs from watcher to reduce inotify load
     config.watchOptions = {
       ...config.watchOptions,
@@ -91,6 +103,25 @@ const nextConfig = {
         source: "/v1",
         destination: "/api/v1"
       }
+    ];
+  },
+  async headers() {
+    return [
+      {
+        // Provider icons (webp), favicons, logos — immutable, hash-stable files.
+        // Browser caches for 1 year; revalidation via Last-Modified/ETag.
+        source: "/providers/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+        ],
+      },
+      {
+        // Next.js hashed static assets (JS/CSS chunks) — content-addressed, safe to cache forever.
+        source: "/_next/static/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+        ],
+      },
     ];
   }
 };

@@ -2,21 +2,22 @@ import pkg from "../../../package.json" with { type: "json" };
 
 // App configuration
 export const APP_CONFIG = {
-  name: "9Router Proxy",
+  name: "VansRouter Proxy",
   description: "AI Infrastructure Management",
   version: pkg.version,
 };
 
 // GitHub configuration
 export const GITHUB_CONFIG = {
-  changelogUrl: "https://raw.githubusercontent.com/AnggaR96s/9router/refs/heads/master/CHANGELOG.md",
+  changelogUrl: "https://raw.githubusercontent.com/Vanszs/VansRouter/refs/heads/main/CHANGELOG.md",
+  donateUrl: "",
 };
 
 // Updater configuration
 export const UPDATER_CONFIG = {
-  npmPackageName: "nggrouter",
-  installCmd: "npm i -g nggrouter",
-  installCmdLatest: "npm i -g nggrouter@latest --prefer-online",
+  npmPackageName: "vansrouter",
+  installCmd: "npm i -g vansrouter",
+  installCmdLatest: "npm i -g vansrouter@latest --prefer-online",
   shutdownCountdownSec: 3,
   exitDelayMs: 500,
   statusPort: 20129,
