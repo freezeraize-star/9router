@@ -1,4 +1,4 @@
-# 9Router MIBP Version
+# 9Router Freezeraize Version
 
 A local AI routing gateway with provider fallback and token-saving features. This is a fork of [decolua/9router](https://github.com/decolua/9router).
 
@@ -9,7 +9,7 @@ A local AI routing gateway with provider fallback and token-saving features. Thi
 Pull the image:
 
 ```bash
-docker pull mhiqrambhrng/9router-mibp-version:latest
+docker pull freezeraize-star/9router:latest
 ```
 
 Run the container:
@@ -28,7 +28,7 @@ docker run -d \
   -e INITIAL_PASSWORD=<your-dashboard-password> \
   -e API_KEY_SECRET=<generate-with-openssl-rand-hex-32> \
   -e MACHINE_ID_SALT=<generate-with-openssl-rand-hex-32> \
-  mhiqrambhrng/9router-mibp-version:latest
+  freezeraize-star/9router:latest
 ```
 
 Or using Docker Compose (a `docker-compose.yml` is included in this repo):
@@ -45,8 +45,8 @@ Dashboard opens at `http://localhost:20128/dashboard`.
 Requirements: Node.js 22 or newer.
 
 ```bash
-git clone https://github.com/mhiqrambg/9router-mibp-version.git
-cd 9router-mibp-version
+git clone https://github.com/freezeraize-star/9router.git
+cd 9router
 
 cp .env.example .env
 # Edit .env: set JWT_SECRET, INITIAL_PASSWORD, API_KEY_SECRET, MACHINE_ID_SALT
