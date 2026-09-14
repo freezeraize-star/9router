@@ -65,8 +65,9 @@ export default function ProviderDetailPage() {
   const [bulkProxyPoolId, setBulkProxyPoolId] = useState("__none__");
   const [bulkUpdatingProxy, setBulkUpdatingProxy] = useState(false);
   const [providerStrategy, setProviderStrategy] = useState(null);
-  const [providerStickyLimit, setProviderStickyLimit] = useState("");
   const [strictModelAssignment, setStrictModelAssignment] = useState(false);
+  const [pacingGapSeconds, setPacingGapSeconds] = useState("");
+  const [providerStickyLimit, setProviderStickyLimit] = useState("");
   const [thinkingMode, setThinkingMode] = useState("auto");
   const [autoPing, setAutoPing] = useState({ enabled: false, connections: {} });
   const [suggestedModels, setSuggestedModels] = useState([]);
@@ -82,6 +83,8 @@ export default function ProviderDetailPage() {
   const [oneByOneSummary, setOneByOneSummary] = useState(null);
   const stopOneByOneRef = useRef(false);
   const [importingQoderModels, setImportingQoderModels] = useState(false);
+  const [importingProviderModels, setImportingProviderModels] = useState(false);
+  const [importingClineModels, setImportingClineModels] = useState(false);
   const { copied, copy } = useCopyToClipboard();
 
   const AG_RISK_STORAGE_KEY = "ag_risk_confirmed";
@@ -175,15 +178,10 @@ export default function ProviderDetailPage() {
   const providerStorageAlias = isCompatible ? providerId : providerAlias;
   const assignmentModels = (() => {
     const byId = new Map();
-    const add = (model) => {
-      if (model?.id && !byId.has(model.id)) byId.set(model.id, model);
-    };
+    const add = (model) => { if (model?.id && !byId.has(model.id)) byId.set(model.id, model); };
     models.forEach(add);
-    kiloFreeModels.forEach(add);
     customModels.forEach((model) => {
-      if (model.providerAlias === providerStorageAlias && (model.kind || model.type || "llm") === "llm") {
-        add(model);
-      }
+      if (model.providerAlias === providerStorageAlias && (model.kind || model.type || "llm") === "llm") add(model);
     });
     const disabled = new Set(disabledModelIds);
     return [...byId.values()].filter((model) => !disabled.has(model.id));
@@ -331,7 +329,13 @@ export default function ProviderDetailPage() {
       const override = (settingsData.providerStrategies || {})[providerId] || {};
       setProviderStrategy(override.fallbackStrategy || null);
       setProviderStickyLimit(override.stickyRoundRobinLimit != null ? String(override.stickyRoundRobinLimit) : "1");
-      setStrictModelAssignment(override.strictModelAssignment === true);
+      if (providerId === "freebuff") {
+        setStrictModelAssignment(override.strictModelAssignment === true);
+        // Empty string = "not set" → resolver falls back to the provider default
+        // (20s). Show the stored value, never the effective one, so the field
+        // stays a faithful mirror of what the user actually chose.
+        setPacingGapSeconds(override.pacingGapSeconds != null ? String(override.pacingGapSeconds) : "");
+      }
       // Load per-provider thinking config
       const thinkingCfg = (settingsData.providerThinking || {})[providerId] || {};
       setThinkingMode(thinkingCfg.mode || "auto");
@@ -387,13 +391,9 @@ export default function ProviderDetailPage() {
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
       const current = settingsData.providerStrategies || {};
 
-      // Preserve Freebuff-only settings while changing the shared strategy.
-      const override = { ...(current[providerId] || {}) };
+      // Build override: null strategy means remove override, use global
+      const override = {};
       if (strategy) override.fallbackStrategy = strategy;
-      else {
-        delete override.fallbackStrategy;
-        delete override.stickyRoundRobinLimit;
-      }
       if (strategy === "round-robin" && stickyLimit !== "") {
         override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
       }
@@ -415,6 +415,49 @@ export default function ProviderDetailPage() {
     }
   };
 
+  const handleRoundRobinToggle = (enabled) => {
+    const strategy = enabled ? "round-robin" : null;
+    const sticky = enabled ? (providerStickyLimit || "1") : providerStickyLimit;
+    if (enabled && !providerStickyLimit) setProviderStickyLimit("1");
+    setProviderStrategy(strategy);
+    saveProviderStrategy(strategy, sticky);
+  };
+
+  const handleStickyLimitChange = (value) => {
+    setProviderStickyLimit(value);
+    saveProviderStrategy("round-robin", value);
+  };
+
+  // Persist the freebuff pacing gap (seconds). Empty clears the override so the
+  // provider default applies again — that is the "not set" contract the UI
+  // promises, so an emptied field must DELETE the key rather than store 0/NaN.
+  const handlePacingGapChange = async (value, { commit = false } = {}) => {
+    setPacingGapSeconds(value);
+    if (!commit) return;
+    try {
+      const settingsRes = await fetch("/api/settings", { cache: "no-store" });
+      const settingsData = settingsRes.ok ? await settingsRes.json() : {};
+      const current = settingsData.providerStrategies || {};
+      const trimmed = String(value ?? "").trim();
+      const seconds = Number(trimmed);
+      const nextProvider = { ...(current[providerId] || {}) };
+      if (trimmed === "" || !Number.isFinite(seconds) || seconds <= 0) {
+        delete nextProvider.pacingGapSeconds;
+      } else {
+        nextProvider.pacingGapSeconds = seconds;
+      }
+      await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providerStrategies: { ...current, [providerId]: nextProvider },
+        }),
+      });
+    } catch (error) {
+      console.log("Error saving Freebuff pacing gap:", error);
+    }
+  };
+
   const handleStrictAssignmentToggle = async (enabled) => {
     setStrictModelAssignment(enabled);
     try {
@@ -424,12 +467,10 @@ export default function ProviderDetailPage() {
       await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          providerStrategies: {
-            ...current,
-            [providerId]: { ...(current[providerId] || {}), strictModelAssignment: enabled },
-          },
-        }),
+        body: JSON.stringify({ providerStrategies: {
+          ...current,
+          [providerId]: { ...(current[providerId] || {}), strictModelAssignment: enabled },
+        } }),
       });
     } catch (error) {
       console.log("Error saving Freebuff strict assignment:", error);
@@ -444,26 +485,13 @@ export default function ProviderDetailPage() {
         body: JSON.stringify({ providerSpecificData: { assignedModel: assignedModel || null } }),
       });
       if (res.ok) {
-        setConnections((prev) => prev.map((c) => c.id === connectionId
-          ? { ...c, providerSpecificData: { ...(c.providerSpecificData || {}), assignedModel: assignedModel || null } }
-          : c));
+        setConnections((prev) => prev.map((connection) => connection.id === connectionId
+          ? { ...connection, providerSpecificData: { ...(connection.providerSpecificData || {}), assignedModel: assignedModel || null } }
+          : connection));
       }
     } catch (error) {
       console.log("Error saving Freebuff model assignment:", error);
     }
-  };
-
-  const handleRoundRobinToggle = (enabled) => {
-    const strategy = enabled ? "round-robin" : null;
-    const sticky = enabled ? (providerStickyLimit || "1") : providerStickyLimit;
-    if (enabled && !providerStickyLimit) setProviderStickyLimit("1");
-    setProviderStrategy(strategy);
-    saveProviderStrategy(strategy, sticky);
-  };
-
-  const handleStickyLimitChange = (value) => {
-    setProviderStickyLimit(value);
-    saveProviderStrategy("round-robin", value);
   };
 
   const saveThinkingConfig = async (mode) => {
@@ -513,12 +541,10 @@ export default function ProviderDetailPage() {
   };
 
   useEffect(() => {
-    Promise.resolve().then(() => {
-      fetchConnections();
-      fetchAliases();
-      fetchCustomModels();
-      fetchDisabledModels();
-    });
+    fetchConnections();
+    fetchAliases();
+    fetchCustomModels();
+    fetchDisabledModels();
   }, [fetchConnections, fetchAliases, fetchCustomModels, fetchDisabledModels]);
 
   // Cursor's model availability is account-specific and changes frequently.
@@ -526,13 +552,13 @@ export default function ProviderDetailPage() {
   // registry remains the fallback while the request is pending or unavailable.
   useEffect(() => {
     if (providerId !== "cursor") {
-      queueMicrotask(() => setLiveModels([]));
+      setLiveModels([]);
       return;
     }
 
     const connection = connections.find((item) => item.isActive !== false);
     if (!connection?.id) {
-      queueMicrotask(() => setLiveModels([]));
+      setLiveModels([]);
       return;
     }
 
@@ -620,6 +646,45 @@ export default function ProviderDetailPage() {
     }
   };
 
+  const handleImportProviderModels = async () => {
+    if (importingProviderModels || suggestedModels.length === 0) return;
+
+    setImportingProviderModels(true);
+    try {
+      const builtInIds = new Set(models.map((model) => model.id));
+      const existingCustomIds = new Set(
+        customModels
+          .filter((entry) => entry.providerAlias === providerStorageAlias && (entry.kind || entry.type || "llm") === "llm")
+          .map((entry) => entry.id)
+      );
+      const existingAliasModels = new Set(
+        Object.values(modelAliases).filter((model) => typeof model === "string")
+      );
+      let importedCount = 0;
+
+      for (const model of suggestedModels) {
+        const modelId = model.id || model.name || model.model;
+        if (!modelId || builtInIds.has(modelId) || existingCustomIds.has(modelId)) continue;
+        if (existingAliasModels.has(`${providerStorageAlias}/${modelId}`)) continue;
+
+        await handleAddCustomModel(modelId, "llm", providerStorageAlias, model.caps);
+        existingCustomIds.add(modelId);
+        importedCount += 1;
+      }
+
+      alert(
+        importedCount > 0
+          ? `${translate("Successfully added")} ${importedCount} ${translate("models")}`
+          : translate("All models already exist, no new models added")
+      );
+    } catch (error) {
+      console.log("Error importing provider models:", error);
+      alert(translate("Error fetching models") + ": " + error.message);
+    } finally {
+      setImportingProviderModels(false);
+    }
+  };
+
   // Fetch Qoder model list and automatically add to available models
   const handleImportQoderModels = async () => {
     if (importingQoderModels) return;
@@ -657,7 +722,7 @@ export default function ProviderDetailPage() {
           continue;
         }
 
-        await handleAddCustomModel(cleanModelId, "llm", providerStorageAlias);
+        await handleAddCustomModel(cleanModelId, "llm", providerStorageAlias, model.caps);
         importedCount += 1;
       }
       
@@ -671,6 +736,53 @@ export default function ProviderDetailPage() {
       alert(translate("Error fetching models") + ": " + error.message);
     } finally {
       setImportingQoderModels(false);
+    }
+  };
+  // Fetch the live Cline /models catalog and add every model not yet present.
+  // Cline and ClinePass share the same catalog endpoint (api.cline.bot/api/v1/models).
+  const handleImportClineModels = async () => {
+    if (importingClineModels) return;
+    const activeConnection = connections.find((conn) => conn.isActive !== false);
+    if (!activeConnection) {
+      alert(translate("Please add an active Cline connection first"));
+      return;
+    }
+    setImportingClineModels(true);
+    try {
+      const res = await fetch(`/api/providers/${activeConnection.id}/models`);
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || translate("Failed to fetch models"));
+        return;
+      }
+      const models = data.models || [];
+      if (models.length === 0) {
+        alert(translate("No models returned"));
+        return;
+      }
+      let importedCount = 0;
+      for (const model of models) {
+        const modelId = model.id || model.name;
+        if (!modelId) continue;
+        const alreadyExists = customModels.some(
+          (entry) => entry.providerAlias === providerStorageAlias && entry.id === modelId && (entry.kind || entry.type || "llm") === "llm"
+        ) || Object.values(modelAliases).includes(`${providerStorageAlias}/${modelId}`);
+        if (alreadyExists) {
+          continue;
+        }
+        await handleAddCustomModel(modelId, "llm", providerStorageAlias);
+        importedCount += 1;
+      }
+      if (importedCount === 0) {
+        alert(translate("All models already exist, no new models added"));
+      } else {
+        alert(translate("Successfully added") + ` ${importedCount} ` + translate("models"));
+      }
+    } catch (error) {
+      console.log("Error importing Cline models:", error);
+      alert(translate("Error fetching models") + ": " + error.message);
+    } finally {
+      setImportingClineModels(false);
     }
   };
 
@@ -930,9 +1042,7 @@ export default function ProviderDetailPage() {
   };
 
   useEffect(() => {
-    queueMicrotask(() => {
-      setSelectedConnectionIds((prev) => prev.filter((id) => connections.some((conn) => conn.id === id)));
-    });
+    setSelectedConnectionIds((prev) => prev.filter((id) => connections.some((conn) => conn.id === id)));
   }, [connections]);
 
   const selectedProxySummary = (() => {
@@ -959,24 +1069,38 @@ export default function ProviderDetailPage() {
     setShowBulkProxyModal(false);
   };
 
-  const applyProxyAssignments = async (assignments) => {
+  const applyProxyAssignments = async (assignments, { mode } = {}) => {
     setBulkUpdatingProxy(true);
     try {
-      let failed = 0;
-      for (const { connectionId, proxyPoolId } of assignments) {
-        try {
-          const res = await fetch(`/api/providers/${connectionId}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ proxyPoolId }),
-          });
-          if (!res.ok) failed += 1;
-        } catch (e) {
-          console.log("Error applying proxy for", connectionId, e);
-          failed += 1;
+      // One request for the whole batch. The server does the per-connection
+      // merge inside a single transaction, so 500 accounts is one round trip
+      // instead of 500 — and a failure cannot leave half the batch applied.
+      const res = await fetch("/api/providers/bulk-proxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: providerId,
+          mode: mode || "single",
+          proxyPoolId: assignments[0]?.proxyPoolId ?? null,
+          connectionIds: assignments.map((a) => a.connectionId),
+        }),
+      });
+
+      if (!res.ok) {
+        // Endpoint absent (older bundle) or refused the batch — fall back to the
+        // per-row path so the action still works, just slower.
+        if (res.status === 404 || res.status === 405) {
+          await applyProxyAssignmentsRowByRow(assignments);
+        } else {
+          const data = await res.json().catch(() => ({}));
+          alert(data.error || "Failed to apply proxy.");
+        }
+      } else {
+        const data = await res.json().catch(() => ({}));
+        if (Array.isArray(data.missing) && data.missing.length > 0) {
+          alert(`Applied to ${data.updated} connection(s); ${data.missing.length} no longer exist.`);
         }
       }
-      if (failed > 0) alert(`Updated with ${failed} failed request(s).`);
       await fetchConnections();
       setShowBulkProxyModal(false);
     } finally {
@@ -984,9 +1108,28 @@ export default function ProviderDetailPage() {
     }
   };
 
+  // Kept as the fallback path: one PUT per connection, sequential.
+  const applyProxyAssignmentsRowByRow = async (assignments) => {
+    let failed = 0;
+    for (const { connectionId, proxyPoolId } of assignments) {
+      try {
+        const res = await fetch(`/api/providers/${connectionId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ proxyPoolId }),
+        });
+        if (!res.ok) failed += 1;
+      } catch (e) {
+        console.log("Error applying proxy for", connectionId, e);
+        failed += 1;
+      }
+    }
+    if (failed > 0) alert(`Updated with ${failed} failed request(s).`);
+  };
+
   const handleApplySinglePool = (proxyPoolId) => {
     const targets = connections.map((c) => ({ connectionId: c.id, proxyPoolId }));
-    return applyProxyAssignments(targets);
+    return applyProxyAssignments(targets, { mode: "single" });
   };
 
   const handleApplyOneToOne = () => {
@@ -999,7 +1142,7 @@ export default function ProviderDetailPage() {
       connectionId: c.id,
       proxyPoolId: activePools[i % activePools.length].id,
     }));
-    return applyProxyAssignments(targets);
+    return applyProxyAssignments(targets, { mode: "one-to-one" });
   };
 
 
@@ -1033,39 +1176,20 @@ export default function ProviderDetailPage() {
                   onToggle: (on) => handleAutoPingConnection(conn.id, on),
                   provider: providerId,
                 } : null}
-                onUpdateProxy={async (proxyConfig) => {
+                modelAssignmentOptions={providerId === "freebuff" ? assignmentModels : null}
+                onModelAssignmentChange={providerId === "freebuff" ? (model) => handleModelAssignment(conn.id, model) : null}
+                strictModelAssignment={strictModelAssignment}
+                onUpdateProxy={async (proxyPoolId) => {
                   try {
-                    // Support both new format (object) and legacy format (string/null)
-                    const updatePayload = typeof proxyConfig === 'object' && proxyConfig !== null
-                      ? {
-                          proxyPoolIds: proxyConfig.proxyPoolIds || [],
-                          proxyRotationStrategy: proxyConfig.proxyRotationStrategy || "none",
-                        }
-                      : {
-                          // Legacy single-proxy format
-                          proxyPoolId: proxyConfig || null,
-                        };
-
                     const res = await fetch(`/api/providers/${conn.id}`, {
                       method: "PUT",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify(updatePayload),
+                      body: JSON.stringify({ proxyPoolId: proxyPoolId || null }),
                     });
                     if (res.ok) {
                       setConnections(prev => prev.map(c =>
                         c.id === conn.id
-                          ? { 
-                              ...c, 
-                              providerSpecificData: { 
-                                ...c.providerSpecificData, 
-                                ...(updatePayload.proxyPoolIds !== undefined ? {
-                                  proxyPoolIds: updatePayload.proxyPoolIds,
-                                  proxyRotationStrategy: updatePayload.proxyRotationStrategy,
-                                } : {
-                                  proxyPoolId: updatePayload.proxyPoolId,
-                                })
-                              } 
-                            }
+                          ? { ...c, providerSpecificData: { ...c.providerSpecificData, proxyPoolId: proxyPoolId || null } }
                           : c
                       ));
                     }
@@ -1079,9 +1203,6 @@ export default function ProviderDetailPage() {
                 }}
                 onDelete={() => handleDelete(conn.id)}
                 oneByOneStatus={oneByOneResults[conn.id] || null}
-                modelAssignmentOptions={assignmentModels}
-                onModelAssignmentChange={(model) => handleModelAssignment(conn.id, model)}
-                strictModelAssignment={strictModelAssignment}
               />
             </div>
           </div>
@@ -1172,7 +1293,7 @@ export default function ProviderDetailPage() {
           onCopy={copy}
           onSetAlias={handleSetAlias}
           onDeleteAlias={handleDeleteAlias}
-          onAddCustomModel={(modelId) => handleAddCustomModel(modelId, "llm", providerStorageAlias)}
+          onAddCustomModel={(modelId, caps) => handleAddCustomModel(modelId, "llm", providerStorageAlias, caps)}
           onDeleteCustomModel={(modelId) => handleDeleteCustomModel(modelId, "llm", providerStorageAlias)}
           connections={connections}
           isAnthropic={isAnthropicCompatible}
@@ -1220,7 +1341,7 @@ export default function ProviderDetailPage() {
             isTesting={testingModelIds.has(model.id)}
             isCustom
             isFree={false}
-            caps={getCaps(`${providerId}/${model.id}`)}
+            caps={model.caps || getCaps(`${providerStorageAlias}/${model.id}`)}
             thinkingSuffix={resolveThinkingSuffix(model.id)}
           />
         ))}
@@ -1275,6 +1396,20 @@ export default function ProviderDetailPage() {
           </button>
         )}
 
+        {/* Import Cline /models catalog button — only show for cline and clinepass providers */}
+        {(providerId === "cline" || providerId === "clinepass") && connections.some((conn) => conn.isActive !== false) && (
+          <button
+            onClick={handleImportClineModels}
+            disabled={importingClineModels}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-blue-500/40 px-3 py-2 text-xs text-blue-600 dark:text-blue-400 transition-colors hover:border-blue-500 hover:bg-blue-500/5 sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <span className="material-symbols-outlined text-sm" style={importingClineModels ? { animation: "spin 1s linear infinite" } : undefined}>
+              {importingClineModels ? "progress_activity" : "download"}
+            </span>
+            {importingClineModels ? translate("Fetching...") : translate("Import from /models")}
+          </button>
+        )}
+
         {/* Suggested models from provider API — show only models not yet added */}
         {suggestedModels.length > 0 && (() => {
           const addedFullModels = new Set([
@@ -1294,10 +1429,10 @@ export default function ProviderDetailPage() {
                   <button
                     key={m.id}
                     onClick={async () => {
-                      await handleAddCustomModel(m.id, "llm", providerStorageAlias);
+                      await handleAddCustomModel(m.id, "llm", providerStorageAlias, m.caps);
                     }}
                     className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs text-text-muted hover:text-primary hover:border-primary/40 hover:bg-primary/5 transition-colors"
-                    title={`${m.name} · ${(m.contextLength / 1000).toFixed(0)}k ctx`}
+                    title={m.contextLength ? `${m.name} · ${(m.contextLength / 1000).toFixed(0)}k ctx` : m.name}
                   >
                     <span className="material-symbols-outlined text-[13px]">add</span>
                     {m.id.split("/").pop()}
@@ -1579,13 +1714,53 @@ export default function ProviderDetailPage() {
                   </div>
                 )}
               </div>
-              <div className="flex flex-wrap items-center gap-2 border-t border-black/[0.03] pt-2 dark:border-white/[0.03]">
-                <div>
-                  <span className="text-xs text-text-muted font-medium">Strict Model Assignment</span>
-                  <p className="text-[10px] text-text-muted">Only assigned accounts can serve each model for this provider.</p>
+              {providerId === "freebuff" && (
+                <div className="flex w-full flex-col gap-3 rounded-lg border border-border bg-surface/60 p-3 sm:flex-row sm:items-stretch sm:gap-4">
+                  <div className="flex flex-1 flex-col gap-1.5 border-b border-border/60 pb-3 sm:border-b-0 sm:border-r sm:pb-0 sm:pr-4">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[16px] text-text-muted">shield</span>
+                      <span className="text-xs font-medium text-text-main">Strict Model Assignment</span>
+                      <Toggle size="sm" checked={strictModelAssignment} onChange={handleStrictAssignmentToggle} />
+                    </div>
+                    <p className="text-[10px] leading-relaxed text-text-muted">
+                      Only accounts assigned to a model may serve it.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-1 flex-col gap-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-2 text-xs font-medium text-text-main">
+                        <span className="material-symbols-outlined text-[16px] text-text-muted">schedule</span>
+                        Pacing Gap
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="number"
+                          min={1}
+                          value={pacingGapSeconds}
+                          onChange={(e) => handlePacingGapChange(e.target.value)}
+                          onBlur={(e) => handlePacingGapChange(e.target.value, { commit: true })}
+                          placeholder="20"
+                          aria-label="Pacing gap in seconds"
+                          // w-20, not w-16: measured in a real browser, w-16 clips
+                          // its own text at 5 digits (scrollWidth 69 > clientWidth
+                          // 62), so a value like 99999 would render cut off. w-20
+                          // fits every realistic value up to 6 digits with room
+                          // for the stepper.
+                          className="w-20 shrink-0 rounded-md border border-border bg-background px-2 py-1 text-right text-xs tabular-nums focus:border-primary focus:outline-none"
+                        />
+                        <span className="text-xs text-text-muted">sec</span>
+                      </div>
+                    </div>
+                    <p className="text-[10px] leading-relaxed text-text-muted">
+                      Minimum idle gap between two requests on one account.{" "}
+                      {String(pacingGapSeconds).trim() === "" && (
+                        <span className="rounded bg-primary/10 px-1 py-px font-medium text-primary">default 20s</span>
+                      )}
+                    </p>
+                  </div>
                 </div>
-                <Toggle checked={strictModelAssignment} onChange={handleStrictAssignmentToggle} />
-              </div>
+              )}
             </div>
           </div>
 
@@ -1775,8 +1950,20 @@ export default function ProviderDetailPage() {
               ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
             ].filter((m) => { const k = getModelKind(m); return !k || k === "llm"; }).map((m) => m.id);
             const activeIds = allIds.filter((id) => !disabledModelIds.includes(id));
+            const canImportProviderModels = (providerId === "aihorde" || providerId === "opencode") && suggestedModels.length > 0;
             return (
               <div className="flex gap-2">
+                {canImportProviderModels && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon="download"
+                    onClick={handleImportProviderModels}
+                    disabled={importingProviderModels}
+                  >
+                    {importingProviderModels ? "Importing..." : "Import from /models"}
+                  </Button>
+                )}
                 {disabledModelIds.length > 0 && (
                   <Button size="sm" variant="secondary" icon="restart_alt" onClick={handleEnableAll}>
                     Active All

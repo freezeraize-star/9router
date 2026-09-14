@@ -10,7 +10,15 @@ import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+import { fetchBaiModels } from "./bai.js";
+import { fetchTokenharborModels } from "./tokenharbor.js";
+import { fetchNousModels } from "./nous.js";
+import { fetchOrcarouterModels } from "./orcarouter.js";
+import { fetchApinexModels } from "./apinex.js";
+import { fetchUnikeyModels } from "./unikey.js";
 import { resolveCursorModels } from "open-sse/services/cursorModels.js";
+import { normalizeDiscoveredModels } from "@/shared/utils/modelTokenLimits";
+import { resolveClineModels, resolveClinepassModels } from "open-sse/services/clinepassModels.js";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -287,6 +295,37 @@ const PROVIDER_MODELS_CONFIG = {
     },
   },
 
+  // Cline/ClinePass share api.cline.bot/api/v1/models. The service layer already
+  // handles Bearer-vs-`workos:` auth and swallows failures into null, so these follow
+  // the cursor direct pattern (no refreshFn) and only differ in filtering:
+  // cline returns the whole catalog verbatim, clinepass keeps cline-pass/* only.
+  cline: {
+    customResolver: async (connection) => {
+      const result = await resolveClineModels({
+        accessToken: connection.accessToken,
+        apiKey: connection.apiKey,
+      });
+      if (result?.models?.length) return { models: result.models };
+      return {
+        models: getStaticProviderModels("cline"),
+        warning: "Cline returned no live models; falling back to static catalog.",
+      };
+    },
+  },
+  clinepass: {
+    customResolver: async (connection) => {
+      const result = await resolveClinepassModels({
+        accessToken: connection.accessToken,
+        apiKey: connection.apiKey,
+      });
+      if (result?.models?.length) return { models: result.models };
+      return {
+        models: getStaticProviderModels("clinepass"),
+        warning: "ClinePass returned no live models; falling back to static catalog.",
+      };
+    },
+  },
+
   // Custom resolvers (non-OpenAI-shaped APIs / token-refresh flows)
   kiro: {
     customResolver: async (connection) => {
@@ -391,7 +430,7 @@ const PROVIDER_MODELS_CONFIG = {
   },
   "grok-cli": {
     customResolver: async (connection) => {
-      const proxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {}, connection.id);
+      const proxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
       const result = await resolveGrokCliModels({
         ...connection,
         connectionId: connection.id,
@@ -402,6 +441,7 @@ const PROVIDER_MODELS_CONFIG = {
           connectionProxyUrl: proxy.connectionProxyUrl || "",
           connectionNoProxy: proxy.connectionNoProxy || "",
           vercelRelayUrl: proxy.vercelRelayUrl || "",
+          relayType: proxy.relayType || "",
           strictProxy: proxy.strictProxy === true,
         },
         onCredentialsRefreshed: async (refreshed) => {
@@ -433,7 +473,69 @@ const PROVIDER_MODELS_CONFIG = {
       const data = await response.json();
       return { models: parseOpenAIStyleModels(data) };
     }
-  }
+  },
+  bai: {
+    customResolver: async (connection) => {
+      const result = await fetchBaiModels(connection.apiKey);
+      if (result.error) return result;
+      if (!result.models.length) {
+        return { models: [], warning: "B.AI returned no live models; falling back to static catalog." };
+      }
+      return result;
+    },
+  },
+  tokenharbor: {
+    customResolver: async (connection) => {
+      const result = await fetchTokenharborModels(connection.apiKey);
+      if (result.error) return result;
+      if (!result.models.length) {
+        return { models: [], warning: "Token Harbor returned no live models; falling back to static catalog." };
+      }
+      return result;
+    },
+  },
+  nous: {
+    customResolver: async (connection) => {
+      // /v1/models is public (no auth needed); pass the key anyway so providers
+      // that gate the catalog behind auth still work.
+      const result = await fetchNousModels(connection.apiKey);
+      if (result.error) return result;
+      if (!result.models.length) {
+        return { models: [], warning: "Nous Research returned no live models; falling back to static catalog." };
+      }
+      return result;
+    },
+  },
+  orcarouter: {
+    customResolver: async (connection) => {
+      const result = await fetchOrcarouterModels(connection.apiKey);
+      if (result.error) return result;
+      if (!result.models.length) {
+        return { models: [], warning: "OrcaRouter returned no live models; falling back to static catalog." };
+      }
+      return result;
+    },
+  },
+  apinex: {
+    customResolver: async (connection) => {
+      const result = await fetchApinexModels(connection.apiKey);
+      if (result.error) return result;
+      if (!result.models.length) {
+        return { models: [], warning: "APInex returned no live models; falling back to static catalog." };
+      }
+      return result;
+    },
+  },
+  unikey: {
+    customResolver: async (connection) => {
+      const result = await fetchUnikeyModels(connection.apiKey);
+      if (result.error) return result;
+      if (!result.models.length) {
+        return { models: [], warning: "UniKey returned no live models; falling back to static catalog." };
+      }
+      return result;
+    },
+  },
 };
 
 /**
@@ -472,7 +574,7 @@ export async function GET(request, { params }) {
       }
 
       const data = await response.json();
-      const models = data.data || data.models || [];
+      const models = normalizeDiscoveredModels(data.data || data.models || []);
 
       return NextResponse.json({
         provider: connection.provider,
@@ -513,7 +615,7 @@ export async function GET(request, { params }) {
       }
 
       const data = await response.json();
-      const models = data.data || data.models || [];
+      const models = normalizeDiscoveredModels(data.data || data.models || []);
 
       return NextResponse.json({
         provider: connection.provider,
@@ -539,7 +641,7 @@ export async function GET(request, { params }) {
       return NextResponse.json({
         provider: connection.provider,
         connectionId: connection.id,
-        models: result.models,
+        models: normalizeDiscoveredModels(result.models),
         ...(result.warning ? { warning: result.warning } : {})
       });
     }
@@ -584,7 +686,7 @@ export async function GET(request, { params }) {
     }
 
     const data = await response.json();
-    const models = config.parseResponse(data);
+    const models = normalizeDiscoveredModels(config.parseResponse(data));
 
     return NextResponse.json({
       provider: connection.provider,

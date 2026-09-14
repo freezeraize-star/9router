@@ -3,7 +3,7 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 5;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -83,6 +83,14 @@ export const TABLES = {
       machineId: "TEXT",
       isActive: "INTEGER DEFAULT 1",
       createdAt: "TEXT NOT NULL",
+      tokenLimit: "INTEGER DEFAULT 0",
+      usedTokens: "INTEGER DEFAULT 0",
+      resetInterval: "TEXT DEFAULT 'never'",
+      lastResetAt: "TEXT",
+      allowedModels: "TEXT DEFAULT '*'",
+      rpmLimit: "INTEGER DEFAULT 0",
+      tpmLimit: "INTEGER DEFAULT 0",
+      ipWhitelist: "TEXT DEFAULT ''",
     },
     indexes: ["CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)"],
   },
@@ -150,6 +158,30 @@ export const TABLES = {
       "CREATE INDEX IF NOT EXISTS idx_rd_provider ON requestDetails(provider)",
       "CREATE INDEX IF NOT EXISTS idx_rd_model ON requestDetails(model)",
       "CREATE INDEX IF NOT EXISTS idx_rd_conn ON requestDetails(connectionId)",
+    ],
+  },
+  errorLogs: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      timestamp: "TEXT NOT NULL",
+      endpoint: "TEXT",
+      provider: "TEXT",
+      model: "TEXT",
+      connectionId: "TEXT",
+      comboName: "TEXT",
+      statusCode: "TEXT",
+      errorMessage: "TEXT",
+      request: "TEXT",
+      providerRequest: "TEXT",
+      providerResponse: "TEXT",
+      meta: "TEXT",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_el_ts ON errorLogs(timestamp DESC)",
+      "CREATE INDEX IF NOT EXISTS idx_el_provider ON errorLogs(provider)",
+      "CREATE INDEX IF NOT EXISTS idx_el_model ON errorLogs(model)",
+      "CREATE INDEX IF NOT EXISTS idx_el_conn ON errorLogs(connectionId)",
+      "CREATE INDEX IF NOT EXISTS idx_el_combo ON errorLogs(comboName)",
     ],
   },
 };

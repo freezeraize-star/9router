@@ -64,6 +64,9 @@ export const GITHUB_CONFIG = { ...PROVIDER_OAUTH["github"] };
 // Kiro OAuth Configuration (multi-method: AWS Builder ID / IDC / Social / Import Token)
 export const KIRO_CONFIG = { ...PROVIDER_OAUTH["kiro"] };
 
+// Nous OAuth Configuration (Device Code Flow, Hermes CLI client)
+export const NOUS_CONFIG = { ...PROVIDER_OAUTH["nous"] };
+
 // AWS region allowlist pattern — prevents SSRF via region injection into upstream URLs (GHSA-6mwv-4mrm-5p3m)
 export const AWS_REGION_PATTERN = /^[a-z]{2}-[a-z]+-\d{1,2}$/;
 
@@ -124,7 +127,7 @@ export const KIMCHI_CONFIG = { ...PROVIDER_OAUTH["kimchi"] };
 // Endpoint: cli-chat-proxy.grok.com — same client_id as xai, different flow + scopes
 export const GROK_CLI_CONFIG = { ...PROVIDER_OAUTH["grok-cli"] };
 
-// Freebuff OAuth Configuration (Device Code Flow)
+// Freebuff / Codebuff OAuth Configuration (fingerprint device-code flow via freebuff.com)
 export const FREEBUFF_CONFIG = { ...PROVIDER_OAUTH["freebuff"] };
 
 // Trae (ByteDance marscode) OAuth — authorization_code flow with local callback.

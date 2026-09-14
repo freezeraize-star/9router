@@ -216,6 +216,100 @@ describe("getUsageForProvider(freebuff)", () => {
     });
   });
 
+  it("reports the account-level freeWindows (day/week/month) alongside per-model quotas", async () => {
+    proxyAwareFetch.mockResolvedValueOnce(
+      jsonResponse({
+        status: "none",
+        accessTier: "full",
+        rateLimitsByModel: {},
+        freeWindows: {
+          dayUsed: 1,
+          dayLimit: 5,
+          weekUsed: 2,
+          weekLimit: 14,
+          monthUsed: 3,
+          monthLimit: 40,
+          dayResetAt: "2026-09-12T07:00:00.000Z",
+          monthResetAt: "2026-10-01T07:00:00.000Z",
+        },
+      }),
+    );
+
+    const usage = await getUsageForProvider({
+      provider: "freebuff",
+      accessToken: "tok-1",
+    });
+
+    // Account-level allowance is reported once, not duplicated per model.
+    expect(usage.freeWindows).toEqual([
+      { label: "Day", used: 1, total: 5, resetAt: "2026-09-12T07:00:00.000Z", recurring: true, unlimited: false },
+      { label: "Week", used: 2, total: 14, resetAt: null, recurring: true, unlimited: false },
+      { label: "Month", used: 3, total: 40, resetAt: "2026-10-01T07:00:00.000Z", recurring: true, unlimited: false },
+    ]);
+    expect(Object.keys(usage.quotas)).toEqual([]);
+  });
+
+  it("omits freeWindows entirely on a server that does not send it", async () => {
+    proxyAwareFetch.mockResolvedValueOnce(
+      jsonResponse({
+        status: "active",
+        accessTier: "full",
+        instanceId: "inst-1",
+        model: "deepseek/deepseek-v4-flash",
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+        rateLimitsByModel: {
+          "deepseek/deepseek-v4-flash": { limit: 6, recentCount: 1, resetAt: "2026-08-06T07:00:00.000Z" },
+        },
+      }),
+    );
+
+    const usage = await getUsageForProvider({
+      provider: "freebuff",
+      accessToken: "tok-1",
+    });
+
+    expect(usage.freeWindows).toBeUndefined();
+    expect(usage.quotas["deepseek/deepseek-v4-flash"]).toMatchObject({ used: 1, total: 6 });
+  });
+
+  it("flags peak-priced rows and quota-exempt accounts from the server block", async () => {
+    proxyAwareFetch.mockResolvedValueOnce(
+      jsonResponse({
+        status: "none",
+        accessTier: "full",
+        rateLimitsByModel: {},
+        freebucks: {
+          balance: 100,
+          daily: { limit: 25, spent: 5, remaining: 20, resetAt: "2026-09-08T07:00:00.000Z" },
+          wallet: { balance: 80, monthlyBonus: 0 },
+          quotaExempt: true,
+          planId: null,
+          prices: { "deepseek/deepseek-v4-flash": 30 },
+          peak: {
+            modelIds: ["deepseek/deepseek-v4-flash"],
+            surcharge: 15,
+            endsAt: "2026-09-08T10:00:00.000Z",
+          },
+        },
+      }),
+    );
+
+    const usage = await getUsageForProvider({
+      provider: "freebuff",
+      accessToken: "tok-1",
+    });
+
+    // Peak-priced row carries the flag + surcharge window; quotaExempt rides
+    // the summary so the client knows zero-balance sessions still start.
+    expect(usage.quotas["deepseek/deepseek-v4-flash"]).toMatchObject({
+      peak: true,
+      peakSurcharge: 15,
+      peakEndsAt: "2026-09-08T10:00:00.000Z",
+      price: 30,
+    });
+    expect(usage.freebucks).toMatchObject({ quotaExempt: true });
+  });
+
   it("attaches no price to legacy session-quota rows", async () => {
     proxyAwareFetch.mockResolvedValueOnce(jsonResponse(PRE_JOIN));
 

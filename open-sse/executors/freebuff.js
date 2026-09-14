@@ -1,14 +1,25 @@
 import crypto from "node:crypto";
+import os from "node:os";
+import { execSync } from "node:child_process";
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { dbg } from "../utils/debugLog.js";
 import {
+  getFreebuffCliFingerprint,
+  getCachedFreebuffCliFingerprint,
+} from "../shared/freebuffFingerprint.js";
+import {
+  acquireFreebuffRequestSlot,
+  freebuffPacingRemainingMs,
+} from "../shared/freebuffPacing.js";
+import {
   FETCH_CONNECT_TIMEOUT_MS,
   DEFAULT_RETRY_CONFIG,
   resolveRetryEntry,
 } from "../config/runtimeConfig.js";
-import { markPoolUnfit, clearPoolUnfit } from "../services/proxyPoolFitness.js";
+// Ported from Vanszs/VansRouter (freebuff support) without the proxy-pool
+// fitness service this repo does not ship; freebuff works without a proxy.
 
 /**
  * Freebuff Executor — OpenAI-compatible chat completions on
@@ -33,12 +44,39 @@ import { markPoolUnfit, clearPoolUnfit } from "../services/proxyPoolFitness.js";
  * codebuff_metadata.freebuff_instance_id.
  */
 const SESSION_PATH = "/api/v1/freebuff/session";
+// Dedicated admission route (2026-09-11). Upstream moved POST claims off the
+// legacy /session path onto /session/admission, which fails closed on servers
+// that predate its guarantees instead of half-committing a claim. The legacy
+// path is still served, so we fall back to it when admission is genuinely
+// absent — no handler ran, so nothing was mutated and the retry is safe.
+// (Upstream also ships /session/reuse for resuming a known instance id; this
+// gateway never persists one across restarts, so there is nothing to reuse.)
+const SESSION_ADMISSION_PATH = "/api/v1/freebuff/session/admission";
 const RUN_PATH = "/api/v1/agent-runs";
 const SESSION_DEFAULT_TTL_MS = 60 * 60 * 1000; // active sessions live ~1h
+
+// Liveness beat so the server keeps this instance's concurrency slot instead of
+// sweeping it as idle (mirrors FREEBUFF_SESSION_HEARTBEAT_INTERVAL_MS = 45s).
+const HEARTBEAT_INTERVAL_MS = 45_000;
+// The CLI declares its wallet spend ceiling on every claim; 0 = "do not spend
+// my wallet for this session", which is what a free gateway wants.
+const WALLET_SPEND_LIMIT = 0;
 
 // Chat statuses that mean our claimed session is stale and must be re-claimed
 // before retrying (mirrors the CLI's FreebuffGateErrorKind statuses).
 const SESSION_STALE_CODES = new Set([428, 409, 410]);
+
+// Gate kinds that do NOT clear by re-claiming. model_locked/limited_ip are
+// cooldown-gated; consent/purchase_* are policy/purchase refusals that return
+// the same answer every time — recycling them is the retry loop upstream paid
+// for in #1801, so all of them fail fast instead of forcing a fresh claim.
+const NON_RECLAIMABLE_GATE_KINDS = new Set([
+  "model_locked",
+  "limited_ip",
+  "consent",
+  "purchase_held",
+  "purchase_released",
+]);
 
 // Models the backend runs as a CAPACITY-LIMITED OFFER rather than a standing
 // picker row. Claude Fable 5 is not in the client catalog at all: the server
@@ -87,11 +125,6 @@ function injectFreebuffMarker(body) {
   return { ...body, messages: [{ role: "system", content: FREEBUFF_SYSTEM_MARKER }, ...messages] };
 }
 
-// The backend's foreign_toolset gate rejects any tool-calling request whose
-// toolset lacks the CLI's `end_turn` tool with a misleading 404 "No endpoints
-// found for {model}" (verified live 2026-08-14; the freebuff-proxy bridge
-// works around the same gate by injecting this definition). Every request that
-// declares tools must carry it or the router finds no serving endpoint.
 const END_TURN_TOOL = {
   type: "function",
   function: {
@@ -104,10 +137,7 @@ const END_TURN_TOOL = {
 function injectEndTurnTool(body) {
   const tools = body?.tools;
   if (!Array.isArray(tools) || tools.length === 0) return body;
-  const hasEndTurn = tools.some(
-    (t) => t?.function?.name === "end_turn",
-  );
-  if (hasEndTurn) return body;
+  if (tools.some((tool) => tool?.function?.name === "end_turn")) return body;
   return { ...body, tools: [...tools, END_TURN_TOOL] };
 }
 
@@ -117,11 +147,10 @@ function injectEndTurnTool(body) {
 // base2 roots during the transition).
 //
 // Withdrawn upstream models (deepseek-v4-pro, minimax-m3, stealth/ox-alpha,
-// google/gemini-3.8-flash, meta/muse-spark-1.3-contributor) are deliberately
-// absent: no new session can be admitted on them, so mapping them would only
-// hide a dead pick behind a wrong root. z-ai/glm-5.2 stays mapped
-// (referral-earned accounts can still run it) even though it is not a
-// standing picker row.
+// google/gemini-3.8-flash) are deliberately absent: no new session can be
+// admitted on them, so mapping them would only hide a dead pick behind a
+// wrong root. z-ai/glm-5.2 stays mapped (referral-earned accounts can still
+// run it) even though it is not a standing picker row.
 const FREE_ROOT_AGENT_BY_MODEL = {
   "deepseek/deepseek-v4-flash": "base3-free-deepseek-flash",
   "z-ai/glm-5.2": "base3-free-glm",
@@ -129,6 +158,9 @@ const FREE_ROOT_AGENT_BY_MODEL = {
   "mimo/mimo-v2.5": "base3-free-mimo",
   "openai/gpt-5.6-luna": "base3-free-luna",
   "upstage/solar-pro4": "base3-free-solar-pro4",
+  // 1.3 is the live row; 1.2's root stays registered while sessions admitted on
+  // it drain (upstream keeps both entries for the same reason).
+  "meta/muse-spark-1.3-contributor": "base3-free-muse-spark-1-3",
   "meta/muse-spark-1.2-contributor": "base3-free-muse-spark",
   "anthropic/claude-fable-5": "base3-free-fable",
 };
@@ -145,12 +177,17 @@ const fbState = (globalThis[FB_STATE_KEY] ??= {
   modelLockCooldowns: new Map(), // `${token}::${model}` -> expiresAt (ms)
   poolLimitCooldowns: new Map(), // `${proxyKey}::${model}` -> expiresAt (ms)
   offerCache: new Map(),        // `${token}` -> { fetchedAt, offers: [] } (limited-offer rows)
+  heartbeats: new Map(),        // `${token}::${model}` -> interval handle (liveness beat)
+  // Set once the server answers 404/405 on the dedicated admission route, so
+  // later claims go straight to the legacy path instead of re-probing.
+  admissionUnsupported: false,
 });
 const sessionCache = fbState.sessionCache;
 const inflight = fbState.inflight;
 const modelLockCooldowns = fbState.modelLockCooldowns;
 const poolLimitCooldowns = fbState.poolLimitCooldowns;
 const offerCache = fbState.offerCache;
+const heartbeats = (fbState.heartbeats ??= new Map());
 
 const MODEL_LOCK_COOLDOWN_MS = 10 * 60 * 1000; // session bound to another model (~1h) — re-check every 10 min
 const POOL_LIMITED_COOLDOWN_MS = 5 * 60 * 1000; // IP tier refuses this model — try a different pool/relay
@@ -183,7 +220,7 @@ function proxyKeyOf(proxyOptions) {
 function sessionGateFromText(text) {
   let parsed = {};
   try { parsed = JSON.parse(String(text || "")); } catch { parsed = {}; }
-  return classifySessionGate(parsed.error || parsed.error_type || "", parsed.message || "", parsed.currentModel || null);
+  return classifySessionGate(parsed.status || parsed.error || parsed.error_type || "", parsed.message || "", parsed.currentModel || null);
 }
 
 // Parse a 409/428/410 body into { kind, currentModel }. `msg` may be a whole
@@ -194,7 +231,7 @@ function sessionGateFromError(error) {
   if (start < 0) return null;
   try {
     const parsed = JSON.parse(msg.slice(start));
-    return classifySessionGate(parsed.error || "", parsed.message || "", parsed.currentModel || null);
+    return classifySessionGate(parsed.status || parsed.error || parsed.error_type || "", parsed.message || "", parsed.currentModel || null);
   } catch {
     return null;
   }
@@ -203,6 +240,13 @@ function sessionGateFromError(error) {
 function classifySessionGate(code, message, currentModel) {
   if (code === "session_superseded") return { kind: "superseded" };
   if (code === "model_locked") return { kind: "model_locked", currentModel };
+  // 409 gate statuses added upstream on 2026-09-11. `consent_required` is a
+  // policy refusal and the purchase_* family is a Desktop purchase claim — none
+  // of them clear by re-claiming, so they must stop (terminal) rather than
+  // recycle through the reclaim path.
+  if (code === "consent_required") return { kind: "consent" };
+  if (code === "purchase_in_use" || code === "purchase_capacity") return { kind: "purchase_held" };
+  if (code === "purchase_claim_released") return { kind: "purchase_released" };
   // session_model_mismatch with the limited-tier message is an IP-tier refusal;
   // without it (or unknown) treat it as a model lock so we don't reclaim in a loop.
   if (code === "session_model_mismatch") {
@@ -214,7 +258,7 @@ function classifySessionGate(code, message, currentModel) {
 }
 
 // Applies cooldowns and throws for non-reclaimable gates. Never returns for them.
-function throwSessionGateError(gate, { token, model, proxyKey, poolId, log }) {
+async function throwSessionGateError(gate, { token, model, proxyKey, poolId, scope, log }) {
   if (gate.kind === "model_locked") {
     const until = Date.now() + MODEL_LOCK_COOLDOWN_MS;
     setCooldown(modelLockCooldowns, `${token}::${model}`, until);
@@ -230,8 +274,6 @@ function throwSessionGateError(gate, { token, model, proxyKey, poolId, log }) {
   if (gate.kind === "limited_ip") {
     const until = Date.now() + POOL_LIMITED_COOLDOWN_MS;
     setCooldown(poolLimitCooldowns, `${proxyKey}::${model}`, until);
-    const scope = `freebuff::${model}`;
-    if (poolId) markPoolUnfit(poolId, scope, until, "limited_ip");
     // Pool-scoped, not account-scoped: the caller retries via another pool
     // instead of locking the account (resetsAtMs intentionally absent).
     const err = new Error(
@@ -240,6 +282,35 @@ function throwSessionGateError(gate, { token, model, proxyKey, poolId, log }) {
     err.status = 409;
     err.poolScoped = { poolId, scope, reason: "limited_ip" };
     log?.warn?.("AUTH", `Freebuff limited-IP refused ${model} (proxy=${proxyKey.slice(0, 40)}…) — cooldown ${POOL_LIMITED_COOLDOWN_MS / 60000}min`);
+    throw err;
+  }
+  if (gate.kind === "consent") {
+    // Policy refusal, not a lock: no cooldown map, and the caller must not
+    // reclaim. poolScoped keeps it off the account so accountFallback rotates.
+    const err = new Error(
+      "Freebuff requires a data-use consent that has not been granted on this account — open freebuff.com, accept the notice, then retry. Retrying here will not clear it.",
+    );
+    err.status = 409;
+    err.poolScoped = { poolId, scope, reason: "consent_required" };
+    log?.warn?.("AUTH", `Freebuff consent_required for ${model} — terminal, no reclaim`);
+    throw err;
+  }
+  if (gate.kind === "purchase_held") {
+    const err = new Error(
+      "Freebuff Desktop purchase for this model is already in use (slot bound to another instance) — it cannot be claimed from here. Wait for it to free up or end it in Freebuff Desktop.",
+    );
+    err.status = 409;
+    err.poolScoped = { poolId, scope, reason: "purchase_held" };
+    log?.warn?.("AUTH", `Freebuff purchase slot held for ${model} — terminal, no reclaim`);
+    throw err;
+  }
+  if (gate.kind === "purchase_released") {
+    const err = new Error(
+      "Freebuff released this single-use Desktop purchase claim — a new claim id must be persisted before retrying.",
+    );
+    err.status = 409;
+    err.poolScoped = { poolId, scope, reason: "purchase_released" };
+    log?.warn?.("AUTH", `Freebuff purchase claim released for ${model} — terminal, no reclaim`);
     throw err;
   }
 }
@@ -284,25 +355,111 @@ async function requestSession(token, model, proxyOptions) {
   // checked before the POST so a closed offer never burns a claim attempt.
   await guardOfferClaim(token, model, proxyOptions);
 
-  const response = await fetchWithNetworkRetry(`${sessionOrigin()}${SESSION_PATH}`, {
+  const claim = (path) => fetchWithNetworkRetry(`${sessionOrigin()}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
-      "User-Agent": "codebuff-cli/0.0.138",
+      "User-Agent": "Bun/1.3.14",
       "x-freebuff-model": model,
+      // Mirrors the CLI: the wallet ceiling rides every claim. 0 means "never
+      // spend the wallet for this session", so a claim cannot silently bill.
+      "x-freebuff-wallet-spend-limit": String(WALLET_SPEND_LIMIT),
     },
   }, proxyOptions);
+
+  // Admission first, then the legacy path only when admission is missing.
+  //   405 → the route does not exist. Remember it for the process lifetime so
+  //         later claims skip a doomed round trip.
+  //   404 → AMBIGUOUS: it is also how the legacy route reports "no session row
+  //         yet", so it is treated as "retry on the legacy path ONCE" without
+  //         caching the verdict; if it really meant "route missing" the legacy
+  //         answer settles it, and if it meant "no row" the legacy answer says
+  //         the same thing. Either way nothing is mutated twice.
+  let response;
+  if (fbState.admissionUnsupported) {
+    response = await claim(SESSION_PATH);
+  } else {
+    response = await claim(SESSION_ADMISSION_PATH);
+    if (response.status === 405) {
+      fbState.admissionUnsupported = true;
+      response = await claim(SESSION_PATH);
+    } else if (response.status === 404) {
+      response = await claim(SESSION_PATH);
+    }
+  }
 
   let data = {};
   try { data = await response.json(); } catch { data = {}; }
 
+  const status = data?.status;
+  // Mirror the CLI's callFreebuffSession: gate statuses ride non-2xx POST
+  // responses with a parseable body — 403 → country_blocked/banned, 409 →
+  // model_locked/model_unavailable/consent_required/purchase_*, 429 →
+  // rate_limited/spend_limited/ip_capped.
+  // Passing those through (instead of throwing a generic HTTP error) lets the
+  // status handlers below classify and cooldown correctly.
+  const knownGateStatuses = new Set([
+    "country_blocked", "banned", "model_locked", "model_unavailable",
+    "rate_limited", "spend_limited", "ip_capped", "premium_slot_taken",
+    "consent_required", "purchase_claim_released", "purchase_in_use",
+    "purchase_capacity",
+  ]);
   if (response.status === 401) {
     const err = new Error("Freebuff session auth failed (401) — re-login in the dashboard");
     err.status = 401;
     throw err;
   }
-  const status = data?.status;
+  if (!response.ok && !knownGateStatuses.has(status)) {
+    const err = new Error(`Freebuff session request failed: ${response.status} ${JSON.stringify(data).slice(0, 200)}`);
+    err.status = response.status;
+    throw err;
+  }
+  // 404 = no session row at all → pre-join state, proceed unsessioned (the
+  // chat 428 tells us if the admission gate actually requires one).
+  if (response.status === 404) {
+    return { instanceId: null, status: "none" };
+  }
+
+  if (status === "active") {
+    const parsedExp = Date.parse(data.expiresAt || "");
+    const entry = {
+      instanceId: data.instanceId,
+      expiresAt: Number.isFinite(parsedExp) ? parsedExp : Date.now() + SESSION_DEFAULT_TTL_MS,
+    };
+    sessionCache.set(sessionCacheKey(token, model), entry);
+    // Keep the concurrency slot alive between turns (no request is made for up
+    // to an hour while the gateway sits idle).
+    startHeartbeat(token, model, data.instanceId, proxyOptions);
+
+    // Session-limits soft-stop: the claim response carries per-model usage
+    // (rateLimitsByModel / active-session rateLimit). The official CLI shows
+    // "N of M sessions used, resets in …" and stops; hammering past it is the
+    // anti-abuse pattern that gets accounts flagged. When the allowance for
+    // THIS model is exhausted, fail fast with resetsAtMs so the account
+    // fallback rotates instead of re-claiming into a gate wall.
+    const rl = data.rateLimitsByModel?.[model] || data.rateLimit || null;
+    const used = Number(rl?.recentCount);
+    const total = Number(rl?.limit);
+    if (rl && Number.isFinite(used) && Number.isFinite(total) && used >= total) {
+      const resetMs = Number.isFinite(Date.parse(rl?.resetAt || ""))
+        ? Date.parse(rl.resetAt)
+        : Date.now() + 30 * 60 * 1000;
+      const err = new Error(
+        `Freebuff session allowance for ${model} is used up (${used}/${total}) — resets ${new Date(resetMs).toLocaleTimeString()}. Another account or model will serve this request.`,
+      );
+      err.status = 429;
+      err.resetsAtMs = resetMs;
+      throw err;
+    }
+    return { instanceId: data.instanceId, status: "active" };
+  }
+  if (status === "none") {
+    // Not session-gated right now — proceed without an instance id; a 428 on
+    // chat tells us the admission gate actually requires a session.
+    return { instanceId: null, status: "none" };
+  }
+
   const GATE_MESSAGES = {
     country_blocked: "Freebuff is not available in your region (country blocked).",
     banned: "Your Freebuff account has been banned.",
@@ -312,13 +469,21 @@ async function requestSession(token, model, proxyOptions) {
     model_locked: "Freebuff session is locked to another model — end it in the CLI or wait for it to expire.",
     model_unavailable: "This model is not available on Freebuff right now.",
     premium_slot_taken: "Freebuff premium slot is taken — try another model.",
+    // 2026-09-11 gate family. All of these are terminal: re-claiming returns the
+    // same answer, so they are surfaced as-is and never recycled.
+    consent_required: "Freebuff requires a data-use consent for this account — accept it on freebuff.com, then retry.",
+    purchase_in_use: "Freebuff Desktop purchase for this model is already in use by another instance.",
+    purchase_capacity: "Freebuff Desktop purchase capacity is full for this model — try again shortly.",
+    purchase_claim_released: "Freebuff released this single-use Desktop purchase claim — a new claim must be persisted before retrying.",
   };
-  // Gate statuses ride BOTH 200 (pre-join refusals) and 4xx — the backend
-  // sends spend_limited/rate_limited as HTTP 429 with the gate in the body.
-  // Handle them BEFORE the generic !response.ok throw so exhaustion carries
-  // resetsAtMs (skip-until-reset) instead of a bare status.
   if (GATE_MESSAGES[status]) {
     const err = new Error(data?.message ? `${GATE_MESSAGES[status]} ${data.message}` : GATE_MESSAGES[status]);
+    // Machine-readable gate id so execute() can tell terminal refusals
+    // (consent/purchase) from reclaimable ones without string matching.
+    err.code = status;
+    if (data?.freebucksShortfall) {
+      err.freebucksShortfall = data.freebucksShortfall; // { price, balance }
+    }
     // Freebucks / session-allowance exhaustion is a hard stop until the daily
     // Pacific reset — mark the account unavailable until then so accountFallback
     // SKIPS it for the rest of the day instead of retrying every 30s and getting
@@ -339,28 +504,6 @@ async function requestSession(token, model, proxyOptions) {
     }
     throw err;
   }
-
-  if (!response.ok) {
-    const err = new Error(`Freebuff session request failed: ${response.status} ${JSON.stringify(data).slice(0, 200)}`);
-    err.status = response.status;
-    throw err;
-  }
-
-  if (status === "active") {
-    const parsedExp = Date.parse(data.expiresAt || "");
-    const entry = {
-      instanceId: data.instanceId,
-      expiresAt: Number.isFinite(parsedExp) ? parsedExp : Date.now() + SESSION_DEFAULT_TTL_MS,
-    };
-    sessionCache.set(sessionCacheKey(token, model), entry);
-    return { instanceId: data.instanceId, status: "active" };
-  }
-  if (status === "none") {
-    // Not session-gated right now — proceed without an instance id; a 428 on
-    // chat tells us the admission gate actually requires a session.
-    return { instanceId: null, status: "none" };
-  }
-
   throw new Error(`Freebuff session rejected (${status || response.status}): ${JSON.stringify(data).slice(0, 200)}`);
 }
 
@@ -378,7 +521,7 @@ async function fetchSessionOffers(token, proxyOptions) {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
-      "User-Agent": "codebuff-cli/0.0.138",
+      "User-Agent": "Bun/1.3.14",
       Accept: "application/json",
     },
   }, proxyOptions);
@@ -436,6 +579,99 @@ async function guardOfferClaim(token, model, proxyOptions) {
   return offer;
 }
 
+// Best-effort session teardown — mirrors the CLI's DELETE /session which
+// returns the early-end refund receipt (freebucksRefund). Never throws.
+// Only meaningful for an active session with an instance id; a session that
+// already ended (or was swept) needs no DELETE.
+export async function endSession(token, instanceId, proxyOptions = null) {
+  if (!instanceId) return null;
+  try {
+    // The row is going away — stop beating for it first so a beat can't race
+    // the DELETE and re-mark a row we just tore down.
+    for (const [key, entry] of sessionCache) {
+      if (entry?.instanceId === instanceId) {
+        const [tok, mdl] = key.split("::");
+        stopHeartbeat(tok, mdl);
+      }
+    }
+    const res = await fetchWithNetworkRetry(`${sessionOrigin()}${SESSION_PATH}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "Bun/1.3.14",
+        "x-freebuff-instance-id": instanceId,
+      },
+    }, proxyOptions);
+    if (res.status === 401) {
+      const err = new Error("Freebuff session auth failed (401) — re-login in the dashboard");
+      err.status = 401;
+      throw err;
+    }
+    if (!res.ok) {
+      // End-session is best-effort; a refusal (e.g. session already swept)
+      // is not worth failing the caller over.
+      return null;
+    }
+    const data = await res.json().catch(() => ({}));
+    return Number.isFinite(Number(data?.freebucksRefund)) ? data : null;
+  } catch {
+    return null; // best-effort only — the server sweeps stale sessions
+  }
+}
+
+// Liveness beat. The server only keeps an instance's concurrency slot while it
+// sees a `last_seen_at` that a beat wrote, and a client that never beats has its
+// row swept as idle — which is exactly the shape a headless gateway has, since
+// it makes no HTTP request at all during the ~1h a session sits open between
+// turns. One GET per live (token, model) every 45s (the CLI's interval) marks
+// the row as still there. Fail-open: a failed beat is swallowed, and the
+// interval is unref'd so it can never hold the process open.
+function heartbeatKey(token, model) {
+  return sessionCacheKey(token, model);
+}
+
+function stopHeartbeat(token, model) {
+  const key = heartbeatKey(token, model);
+  const handle = heartbeats.get(key);
+  if (handle) {
+    clearInterval(handle);
+    heartbeats.delete(key);
+  }
+}
+
+function startHeartbeat(token, model, instanceId, proxyOptions) {
+  if (!instanceId) return;
+  const key = heartbeatKey(token, model);
+  stopHeartbeat(token, model);
+  const beat = async () => {
+    // A row that expired (or was ended) must not keep beating.
+    const cached = sessionCache.get(key);
+    if (!cached || cached.expiresAt <= Date.now()) {
+      stopHeartbeat(token, model);
+      return;
+    }
+    try {
+      await fetchWithNetworkRetry(`${sessionOrigin()}${SESSION_PATH}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "User-Agent": "Bun/1.3.14",
+          Accept: "application/json",
+          "x-freebuff-instance-id": instanceId,
+          "x-freebuff-heartbeat": "1",
+          // Compact poll: quota fields were already returned at admission.
+          "x-freebuff-compact-session": "1",
+        },
+      }, proxyOptions, 1, 10_000);
+    } catch {
+      // Liveness is best-effort — the server's TTL spans several missed beats.
+    }
+  };
+  const handle = setInterval(beat, HEARTBEAT_INTERVAL_MS);
+  handle.unref?.();
+  heartbeats.set(key, handle);
+}
+
 async function ensureSession(token, model, proxyOptions, force = false) {
   const key = sessionCacheKey(token, model);
   // Lazy prune: drop stale rows so the cache never accumulates expired entries.
@@ -466,7 +702,7 @@ async function startRun(token, model, proxyOptions) {
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
-      "User-Agent": "codebuff-cli/0.0.138",
+      "User-Agent": "Bun/1.3.14",
     },
     body: JSON.stringify({
       action: "START",
@@ -504,7 +740,7 @@ async function finishRun(token, runId, status, proxyOptions) {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
-        "User-Agent": "codebuff-cli/0.0.138",
+        "User-Agent": "Bun/1.3.14",
       },
       body: JSON.stringify({ action: "FINISH", runId, status }),
       signal: AbortSignal.timeout(10_000),
@@ -515,9 +751,13 @@ async function finishRun(token, runId, status, proxyOptions) {
 }
 
 export function resetSessionCache() {
+  for (const handle of heartbeats.values()) clearInterval(handle);
+  heartbeats.clear();
   sessionCache.clear();
   inflight.clear();
   offerCache.clear();
+  // The admission probe is per-process; a fresh cache means a fresh probe.
+  fbState.admissionUnsupported = false;
 }
 
 // Snapshot sizes of in-memory freebuff state (for the dashboard memory panel).
@@ -528,6 +768,7 @@ export function sessionStateSize() {
     modelLocks: modelLockCooldowns.size,
     poolLimits: poolLimitCooldowns.size,
     offerCaches: offerCache.size,
+    heartbeats: heartbeats.size,
   };
 }
 
@@ -538,6 +779,10 @@ export function pruneSessionState(now = Date.now()) {
   let removed = 0;
   for (const [key, entry] of sessionCache) {
     if (entry?.expiresAt && entry.expiresAt <= now) {
+      // Stop beating for a row that just expired — otherwise the interval would
+      // keep polling a dead instance until its next tick noticed.
+      const [tok, mdl] = key.split("::");
+      stopHeartbeat(tok, mdl);
       sessionCache.delete(key);
       removed += 1;
     }
@@ -572,12 +817,7 @@ export class FreebuffExecutor extends BaseExecutor {
     return this.config.baseUrl;
   }
 
-  // The backend's model router answers 404 "No endpoints found for {model}"
-  // when a tool-calling request's toolset fails its foreign_toolset gate —
-  // normally prevented by injecting the CLI's `end_turn` tool (see
-  // injectEndTurnTool). If one still slips through, surface a helpful message
-  // instead of a bare 404, and let the standard cooldown pace retries.
-  async parseError(response, bodyText) {
+  parseError(response, bodyText) {
     const text = String(bodyText || "");
     if (response?.status === 404 && /No endpoints found/i.test(text)) {
       return {
@@ -593,9 +833,14 @@ export class FreebuffExecutor extends BaseExecutor {
     // Top-level wire shape — see header comment. `run_id` and
     // `freebuff_instance_id` are attached by execute() (they need the async
     // run/session registration), so this only sets the static parts.
+    // client_id uses the CLI-parity enhanced fingerprint when the login
+    // didn't store one — a `9router-<uuid>` string is trivially separable
+    // from every real CLI install (which always sends `enhanced-…`).
+    const storedFp = credentials?.providerSpecificData?.fingerprintId;
     body.codebuff_metadata = {
       client_id:
-        credentials?.providerSpecificData?.fingerprintId ||
+        (storedFp && storedFp.startsWith("enhanced-") && storedFp) ||
+        getCachedFreebuffCliFingerprint() ||
         `9router-${crypto.randomUUID()}`,
       cost_mode: "free",
     };
@@ -607,9 +852,7 @@ export class FreebuffExecutor extends BaseExecutor {
     delete body.reasoning_effort;
     delete body.reasoning;
     // Free-tier gate: first system message must open with the CLI marker.
-    body = injectFreebuffMarker(body);
-    // Foreign-toolset gate: tool-calling requests must declare `end_turn`.
-    return injectEndTurnTool(body);
+    return injectEndTurnTool(injectFreebuffMarker(body));
   }
 
   async execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
@@ -618,11 +861,30 @@ export class FreebuffExecutor extends BaseExecutor {
       throw new Error("Freebuff requires a connected Freebuff login (no access token found)");
     }
 
+    // Warm the CLI-parity fingerprint once (first request); every later call
+    // reuses the cached value so client_id is stable for this process.
+    try { await getFreebuffCliFingerprint(); } catch { /* fall back to 9router-<uuid> */ }
+
     // Fail fast while a known-dead (account,model) / (proxy,model) pair is in
     // cooldown — no session claim, no run registration, no upstream spam.
     const proxyKey = proxyKeyOf(proxyOptions);
     const poolId = proxyOptions?.proxyPoolId || null;
     const scope = `freebuff::${model}`;
+
+    // Pacing gate: one account must not serve requests faster than the minimum
+    // idle gap. Bursting past the gap is the exact anti-abuse signature that
+    // preceded real bans (25 req / 9 min). Fail fast with 429 + resetsAtMs so
+    // account fallback rotates instead of hammering the same token.
+    if (!acquireFreebuffRequestSlot(token)) {
+      const waitMs = freebuffPacingRemainingMs(token);
+      const err = new Error(
+        `Freebuff pacing: request too soon for this account — retry after ${Math.ceil(waitMs / 1000)}s (another account will serve this request).`,
+      );
+      err.status = 429;
+      err.resetsAtMs = Date.now() + waitMs;
+      throw err;
+    }
+
     const lockUntil = getCooldown(modelLockCooldowns, `${token}::${model}`);
     if (lockUntil) {
       const err = new Error(`Freebuff session locked to another model — retry after ${new Date(lockUntil).toLocaleTimeString()}`);
@@ -643,7 +905,7 @@ export class FreebuffExecutor extends BaseExecutor {
       session = await ensureSession(token, model, proxyOptions);
     } catch (error) {
       const gate = sessionGateFromError(error);
-      if (gate) throwSessionGateError(gate, { token, model, proxyKey, poolId, log });
+      if (gate) await throwSessionGateError(gate, { token, model, proxyKey, poolId, scope, log });
       log?.error?.("AUTH", `Freebuff session failed: ${error.message}`);
       throw error;
     }
@@ -739,26 +1001,37 @@ export class FreebuffExecutor extends BaseExecutor {
       //   409 session_superseded — another instance took over the session
       //   409 session_model_mismatch — session bound to a different model
       //   410 session_expired    — the active session's expires_at passed
-      // model_locked / limited-tier mismatches are NOT reclaimable — the server
-      // keeps refusing until the session expires or the IP tier changes, so we
-      // set a cooldown and fail fast instead of force re-claiming in a loop.
+      // model_locked / limited-tier / consent / purchase gates are NOT
+      // reclaimable — the server keeps refusing until the session expires, the
+      // IP tier changes, or the user acts upstream, so we fail fast (with a
+      // cooldown where one applies) instead of force re-claiming in a loop.
       if (SESSION_STALE_CODES.has(response.status)) {
         const text = await response.text().catch(() => "");
         const gate = sessionGateFromText(text);
-        if (gate.kind === "model_locked" || gate.kind === "limited_ip") {
+        if (NON_RECLAIMABLE_GATE_KINDS.has(gate.kind)) {
           markFinished("cancelled");
-          throwSessionGateError(gate, { token, model, proxyKey, poolId, log });
+          await throwSessionGateError(gate, { token, model, proxyKey, poolId, scope, log });
         }
 
         log?.debug?.("AUTH", `Freebuff ${response.status} session gate — re-claiming session`);
         markFinished("cancelled");
+        // End the stale session first (DELETE + early-end refund) so the force
+        // re-claim below starts clean — mirrors the official CLI's
+        // "confirm → DELETE then re-POST with the new model".
+        if (session?.instanceId) {
+          const refund = await endSession(token, session.instanceId, proxyOptions);
+          if (refund?.freebucksRefund !== undefined) {
+            log?.info?.("AUTH", `Freebuff early-end refund ${Number(refund.freebucksRefund) > 0 ? `+${refund.freebucksRefund}` : refund.freebucksRefund} Freebucks (ended session ${session.instanceId.slice(0, 8)})`);
+          }
+        }
+        sessionCache.delete(sessionCacheKey(token, model));
         try {
           session = await ensureSession(token, model, proxyOptions, true);
           runId = await startRun(token, model, proxyOptions);
           activeRunId = runId;
         } catch (error) {
           const gate2 = sessionGateFromError(error);
-          if (gate2) throwSessionGateError(gate2, { token, model, proxyKey, poolId, log });
+          if (gate2) await throwSessionGateError(gate2, { token, model, proxyKey, poolId, scope, log });
           log?.error?.("AUTH", `Freebuff session re-claim failed: ${error.message}`);
           throw error;
         }
@@ -767,8 +1040,8 @@ export class FreebuffExecutor extends BaseExecutor {
         if (SESSION_STALE_CODES.has(response.status)) {
           const text2 = await response.text().catch(() => "");
           const gate3 = sessionGateFromText(text2);
-          if (gate3.kind === "model_locked" || gate3.kind === "limited_ip") {
-            throwSessionGateError(gate3, { token, model, proxyKey, poolId, log });
+          if (NON_RECLAIMABLE_GATE_KINDS.has(gate3.kind)) {
+            await throwSessionGateError(gate3, { token, model, proxyKey, poolId, scope, log });
           }
           const err = new Error(
             `Freebuff session gate refused (${response.status}) — another freebuff instance may be holding the session. ${text2.slice(0, 160)}`,
@@ -782,7 +1055,6 @@ export class FreebuffExecutor extends BaseExecutor {
       if (response.ok) {
         modelLockCooldowns.delete(`${token}::${model}`);
         poolLimitCooldowns.delete(`${proxyKey}::${model}`);
-        if (poolId) clearPoolUnfit(poolId, scope);
       }
 
       // The authToken has no refresh path — when it dies, the user re-logs in.
@@ -811,7 +1083,10 @@ export class FreebuffExecutor extends BaseExecutor {
 export const __test__ = {
   ensureSession,
   requestSession,
+  startHeartbeat,
+  stopHeartbeat,
   startRun,
+  endSession,
   resetSessionCache,
   rootAgentIdForModel,
   injectFreebuffMarker,
@@ -822,6 +1097,9 @@ export const __test__ = {
   OFFER_GATED_MODELS,
   FREEBUFF_SYSTEM_MARKER,
   SESSION_STALE_CODES,
+  NON_RECLAIMABLE_GATE_KINDS,
+  SESSION_ADMISSION_PATH,
+  HEARTBEAT_INTERVAL_MS,
 };
 
 export default FreebuffExecutor;

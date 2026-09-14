@@ -6,8 +6,6 @@ import Link from "next/link";
 import PropTypes from "prop-types";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import HeaderMenu from "@/shared/components/HeaderMenu";
-import HeaderLanguage from "@/shared/components/HeaderLanguage";
-import ThemeToggle from "@/shared/components/ThemeToggle";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS } from "@/shared/constants/providers";
@@ -314,18 +312,6 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
           </div>
         )}
         <HeaderSearch />
-        <a
-          href="https://github.com/freezeraize-star/9router"
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-1.5 px-3 h-8 rounded-lg border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 transition-colors text-sm font-medium"
-          aria-label="Freezeraize Edition"
-        >
-          <span className="material-symbols-outlined text-[18px]">code</span>
-          <span className="hidden sm:inline">Freezeraize Edition</span>
-        </a>
-        <ThemeToggle />
-        <HeaderLanguage />
         <HeaderMenu onLogout={handleLogout} />
       </div>
     </header>

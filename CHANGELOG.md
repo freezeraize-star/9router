@@ -1,3 +1,348 @@
+# v0.1.11 (2026-09-13)
+
+## Features
+
+- **New provider: UniKey (`getunikey.ai`)** — a wallet-funded relay whose credit
+  balance is readable from the API key alone. The catalog is narrowed to the 32
+  chat-capable models; video, image and embedding ids the relay also advertises
+  are excluded because they reject `/v1/chat/completions`. Usage is billed in
+  **credits** (1 credit = 0.01 USD, the relay's own unit) with the daily and
+  remaining figures derived from spend, so the dashboard shows a real Remaining
+  instead of only a spend total. A `unikeyTotalCredits` override on the
+  connection sets the grant when it differs from the default 5000, and
+  `unikeyProbeBalance: true` reads the exact figure from the relay instead.
+- **Any provider whose registry declares a `validateUrl` can now be tested from
+  the dashboard.** "Test connection" was a `switch` with a hand-written case per
+  provider, so 41 of 69 API-key providers fell through to `default` and answered
+  "Provider test not supported" — including poolside, venice, sambanova,
+  featherless, kilo-gateway, bazaarlink, bluesminds, morph, baidu, tencent,
+  perplexity-agent, api-airforce and xquik. The fallback probes the declared URL
+  with the key, and performs a **second anonymous probe**: six of those endpoints
+  serve their model list to anyone, so a 200 alone would have reported a junk key
+  as valid. When the anonymous probe also succeeds the connection is marked
+  active with a warning saying the key could not be verified, rather than a false
+  pass.
+
+## Fixes
+
+- **Cohere answered 405 on every request.** The registry pointed at
+  `https://api.cohere.ai/v1/chat/completions`, a path Cohere does not serve — it
+  405s with a valid key, an invalid key, and no key at all, so it was never an
+  auth or model problem. Because 405 reads as "wrong HTTP method" rather than
+  "endpoint gone", it looked like a client bug for as long as nobody compared the
+  URL to the docs. The provider now targets the Compatibility API
+  (`/compatibility/v1/chat/completions`), which is the OpenAI-shaped surface the
+  OpenAI SDK is pointed at, so `DefaultExecutor` needs no translator. `validateUrl`
+  deliberately stays on the native host, which still serves a model list. The
+  Command A family is now listed — `command-a-plus-05-2026`,
+  `command-a-reasoning-08-2025`, `command-a-vision-07-2025`,
+  `command-a-translate-08-2025` — alongside the existing Command R rows; all seven
+  verified reachable. Note that Cohere's Compatibility API does not support
+  `documents`/citations at all; those exist only on `/v2/chat`.
+- **Freebuff quota rows lost their price.** `parseQuotaData` carried **two**
+  `case "freebuff":` arms in one `switch`. A switch takes the first matching arm,
+  so the later arm — the one mapping `price`, `priceNote`, `recurring` and the
+  peak flags — was unreachable dead code and every metered row rendered with no
+  cost, which is the one column a Freebucks-metered account decides on. The
+  duplicate arrived 20 minutes apart on the same day (`9362b044` added a
+  label-only arm, `fab7753f` appended a superset instead of replacing it), and
+  duplicate switch arms are invisible to both grep-by-count and lint. The earlier
+  arm is removed; the later one is a strict superset. Verified against the
+  account's live session payload: 10/10 rows now carry a rate.
+- **Freebuff: the standing "computed balance" notice is gone.** UniKey's
+  explanatory text had been written into the `message` field of a successful
+  usage response, so it rendered as a permanent per-connection notice on every
+  refresh, on all nine connections, even though the numbers were correct. `message`
+  is now reserved for real failures (auth rejected, relay unreachable); the setup
+  guidance moved to the provider `notice`, where it shows once on the provider page.
+- **Smart skill routing never fired for Kiro.** `injectActiveSkills` runs *after*
+  translation, so a Kiro body is `conversationState`-shaped and has no `messages`
+  array — `userText()` therefore read zero messages and silently injected nothing.
+  `userText()` now also reads `conversationState.currentMessage` and `history`.
+  The added tests drive the real translator rather than a hand-made body, because
+  the body upstream's own test used is not one our translator produces.
+- **`x-skill` header was truncated to its first character.** A header value like
+  `watermarks-remover,commit-lint` arrived as `w`, so the per-request override
+  silently disabled the wrong set of skills.
+- **Streaming usage was lost when the client left at the terminal event.** A
+  stream that ended on the final chunk — or was aborted after it — recorded no
+  usage at all, so those requests were invisible in usage stats. Usage is now
+  finalized on the terminal event and again on `cancel()`, both idempotent.
+- **Duplicate `ollama-search` entry removed** from the registry list — it was
+  inserted twice (129 entries for 128 unique ids). Consumers key by id, so there
+  was no runtime impact; the ordered position is the one kept.
+
+# v0.1.10 (2026-09-12)
+
+## Features
+
+- **Add-on Skills — a new `/dashboard/addons` menu** that injects behavior rules
+  into the system prompt of every routed request, without touching the client's
+  own prompt. Three skills ship: `human-handwritten` (anti-AI-slop copywriting,
+  from `miqdadbadjuber/anti-slop`), `watermarks-remover` (invisible-Unicode and
+  C2PA/EXIF stripping, from `guillaumemeier/watermarks-remover`), and
+  `commit-lint` (Conventional Commits enforcement, built in). (PR #3 by
+  [@bagus02](https://github.com/bagus02).)
+- **Per-skill routing mode: off / smart / always** — `always` injects on every
+  request, `smart` injects only when one of the skill's keywords appears in the
+  recent user turns (word-boundary matched, so `copy` does not fire inside
+  `copyright`), `off` never injects.
+- **`x-skill` request header** — per-request override of the dashboard setting:
+  `off` disables all skills, `on` uses the saved list, or pass a comma-separated
+  list of skill ids.
+- **Secure skill prompt updater** — pulls a prompt from a whitelisted source
+  repo, compares SHA-256 against the local file, writes a `.bak` before
+  overwriting, and skips anything edited locally. Source repo/branch/path are
+  read from the local manifest only, never from the request; both the POST and
+  GET paths run the same validation; `prompt_file` is basename-validated;
+  64 KB cap, UTF-8 check, 15 s timeout, 5 min cache, per-skill update lock and
+  atomic tmp+rename writes.
+- **Freebuff: request pacing is now provider config** (`pacing.gapSeconds`),
+  overlappable from the dashboard. A new **Pacing Gap** field on the freebuff
+  provider page sets the minimum idle gap between two requests on one account,
+  in seconds; empty falls back to the default (20 s). Resolution order is
+  dashboard setting → `FREEBUFF_PACING_GAP_MS` → provider config → built-in
+  default, and both the executor gate and the keeper read the same value. Applies
+  on save, with no restart.
+- **Freebuff: Muse Spark 1.3 is the standing model row.** 1.2 was retired from
+  upstream's pickers on 2026-09-02; we had kept it after a probe saw 1.3 return
+  404, which turned out to be a stale key rather than a withdrawal — upstream
+  serves both ids from one shared pool at the same 15 Freebucks/hr. 1.3 now
+  carries its own root agent and capability entry, and 1.2 stays selectable with
+  a `supersededBy` pointer so sessions already admitted on it still run.
+
+## Fixes
+
+- **Backup silently dropped 8 `apiKeys` columns.** `exportDb` hand-picked 6 of
+  the table's 14 columns, so `tokenLimit`, `usedTokens`, `resetInterval`,
+  `lastResetAt`, `allowedModels`, `rpmLimit`, `tpmLimit` and `ipWhitelist` never
+  reached a backup, and `importDb` wrote back the same 6. Nothing errored: an
+  export→import cycle zeroed a key's token usage and erased its rate caps, model
+  allowlist and IP whitelist, and you would only notice when a limit stopped
+  being enforced. One canonical column list now drives the export shape AND both
+  the INSERT and UPDATE SQL, so the column list and its placeholders cannot
+  drift apart. Old backups that carry only the 6 legacy fields still import,
+  landing on `createApiKey`'s defaults.
+- **Freebuff: session claims realigned with the 2026-09 upstream API.** Claiming
+  moved to `POST /session/admission` (legacy `POST /session` kept as a fallback
+  — cached when admission returns 405, retried once without caching on 404, which
+  is ambiguous with "no row yet"), plus a 45 s liveness heartbeat so the server
+  keeps our concurrency slot, the four new gate statuses `consent_required` /
+  `purchase_claim_released` / `purchase_in_use` / `purchase_capacity`, the
+  `x-freebuff-wallet-spend-limit: 0` claim header, and reporting of the
+  account-level `freeWindows` day/week/month allowance.
+- **Relay labels now name the real relay kind.** All three relay pool types
+  (vercel, cloudflare, deno) ride one shared transport field, so logging that
+  field's name reported a Cloudflare Worker as `vercel-relay=`. Logs now print
+  the pool's actual type, which matters because the wrong label sent readers
+  hunting a mis-typed pool that was in fact correct.
+- **Long proxy URLs no longer push the endpoint row out of shape.** The URL field
+  could not shrink — flex items default to `min-width: auto` — so at 320 px a long
+  Vercel relay URL pushed the copy button past the row and made the page scroll
+  sideways. `min-w-0` plus `truncate` lets the field shrink and ellipsize.
+- **The pacing input clipped its own value.** Measured in a browser: the field's
+  content box was 62 px while a 5-digit value needs 69 px, so anything from 99999
+  up rendered cut off with no scrollbar or warning. Widened to the narrowest
+  width that fits every realistic value.
+- **Add-on skill row collapsed on phones.** At 320 px the fixed-width control
+  cluster left the text column 23.9 px wide — about one character — and the
+  description spilled out of its box. The row now stacks below `sm` (icon and text
+  full width, controls on their own line) and is unchanged from `sm` up, so
+  desktop is pixel-identical: the text column goes from 23.9 px to 198 px at
+  320 px, and stays 599.9 px at 1024 px and above.
+- **Groq and Ollama usage reporting.** Groq exposes its rate limits only on a
+  chat completion response, not on `/models`, so quota showed as unknown; a
+  minimal probe with a TTL cache now reads them. Ollama's monthly bucket is read
+  from `limits.monthly.usage` with `session`/`weekly` fallbacks.
+- **models.dev limits reach CodeBuddy** — `codebuddy-intl` maps to the canonical
+  `openai` entry so context limits come from models.dev when the gateway has no
+  row of its own, with the local 400 K fallback only as a failsafe.
+- **9Remote and 9English removed from the sidebar.** Both were upstream promo
+  links to unrelated products, neither routing anywhere in this gateway. The
+  promo modal, its button component, the unused re-export and 43 translation
+  literals went with them; i18n keys that merely contain the word "remote"
+  (Tailscale tunnel warnings) are untouched.
+
+## Performance
+
+- **Applying a proxy pool to many connections is one request instead of N.**
+  The dashboard looped one `PUT /api/providers/[id]` per connection, sequentially:
+  500 accounts meant 500 round trips and 500 transactions, tens of seconds of a
+  frozen "Applying..." state, and a failure part-way left the batch half-applied
+  with no way to tell which half. A new `POST /api/providers/bulk-proxy` does the
+  whole batch in ONE transaction — measured on 500 seeded connections, the write
+  path went from 95 ms to 9 ms (10.6×) and from 500 HTTP round trips to 1.
+  Connections that already hold the requested pool are skipped and reported as
+  `unchanged`; ids that no longer exist come back in `missing`; the pool is
+  validated up front so a bogus id refuses the batch instead of half-writing it.
+  The old per-row path is kept as a fallback for older bundles.
+
+## Internal
+
+- Add-on skills are shipped in the CLI package (`skills/`), and build-home
+  artifacts (jwt-secret, machine-id, sqlite db) are stripped from the published
+  tarball.
+- Test coverage added for the bulk proxy planner and transaction, the apiKeys
+  backup round-trip (verified red-then-green: 3 of 5 cases fail on the previous
+  code), settings round-trip including the pacing gap, the models.dev alias
+  fallback, and the freebuff pacing resolution order.
+- The `verify-no-regression.mjs` gate compares test names against a snapshot
+  whose paths are baked in; on this checkout it produces `undefined` names, so
+  regressions were checked by comparing full unit runs test-by-test instead.
+# v0.1.9 (2026-09-11)
+
+## Features
+- **Qwen provider (standalone)** — dedicated `qwen` provider with its own registry entry (alias `qwen`, priority 12, `apikey` category), official qwen.ai icon, and Model Studio API-key console link. Kept as a first-class provider rather than merged into `alims-intl`.
+- **Video generation: OpenRouter + Vertex AI (Veo)** — `/v1/videos/*` now routes through a provider-adapter layer (`open-sse/handlers/videoProviders/`) so requests can target OpenRouter or Google Cloud (Veo) credentials instead of xAI only; providers without an adapter keep the previous verbatim passthrough. Poll requests resolve their provider from `x-connection-id` or `?provider=`.
+- **Codex image models: GPT Image 2.5 family** — add `gpt-image-1.5`, `gpt-image-2`, `gpt-image-2.5`, `gpt-image-2.5-flare` and `gpt-image-2.5-sunburst` with multi-image support, and mirror the 2.5 ids into the OpenAI catalog; tool-backed image models route through the Codex responses surface.
+- **Antigravity weekly quota tracking** — weekly Gemini / Claude / GPT quota from `retrieveUserQuotaSummary`, plus free-tier handling (#3892).
+- **OpenCode Go model refresh** — add the ids the provider docs now list: chat/completions `glm-5.3`, `kimi-k3`, `deepseek-flash`, `longcat-2.0`, `hy4-preview`, `hy3`; `/messages` `qwen3.8-max`, `qwen3.8-flash`; Responses-only `grok-4.6`, `gpt-5.6-luna`. `deepseek-v4.1-flash` now leads the catalog.
+- **CLI model selector: provider grouping + search** — the flat numbered model list is replaced by provider-grouped browsing (combos first, then providers by alias order), full-text search across all models, and manual custom model ID entry.
+- **Claude Code: working context-window control** — the "Context window" dropdown now drives the auto-compact window (the old `CLAUDE_CODE_MAX_CONTEXT_TOKENS` was ignored for any model Claude Code recognizes), plus a 1M-context toggle.
+- **CodeBuddy-CN catalog refresh** — `deepseek-v4-flash` replaced with `deepseek-v4.1-flash` to match the server's product-config payload.
+
+## Fixes
+- **Antigravity weekly quota — single code path**: merging the fork's quota work with upstream left two parallel implementations in `getAntigravityUsage` (fork 0..100 scale with `force`, upstream 0..1000); the outer assignment silently won and upstream's family-exhausted reconciliation never ran. Now one path (fork semantics, matching the dashboard's `ratioQuota` convention) with the family-exhausted ported onto it.
+- **Claude `cache_control` over budget** — when the client had already spent the 4-marker budget, re-anchoring added a 5th marker and the request 400'd non-retryably across every account; the marker is now capped at the budget and bare single-object content turns are wrapped before the mid-conversation-system fold.
+- **Claude tool type defaulting** — `defaultClaudeToolType()` stamped `type: "custom"` on every Claude-format request carrying tools, satisfying MiniMax but breaking Anthropic-compatible endpoints that only accept the legacy typeless shape (DeepSeek). Now scoped to gateways declaring `requireClaudeToolType` (#3905).
+- **DeepSeek `/anthropic/v1/messages` tools** — keep the built-in `web_search_*` tools while dropping client-defined `custom` tools (MCP / Read / Bash) that the endpoint rejects with `unknown variant "custom"`.
+- **Codex tool schemas** — strip `\p{...}` Unicode-property patterns the `/responses` validator rejects (it has no property escapes), which 400'd the whole request identically on every account and cost a full combo failover per turn (#3922). Codex image requests also restore the `Version` header, now single-sourced from `registry codex.transport.cliVersion`.
+- **Kiro `REQUEST_BODY_INVALID`** — never send a top-level `systemPrompt` (kiro.dev rejects it with 400); two downstream paths kept writing the field back after the translators stopped emitting it. Requests also route through the current runtime surfaces (#3776).
+- **Cline / Airforce response envelope** — unwrap the `{"success":true,"data":…}` wrapper on non-stream chat completions, which both the dashboard model test and the proxy read at top level and reported as "Provider returned no completion choices" (#3644). Adds the live Cline/ClinePass model catalog and refreshes Airforce free models.
+- **ClinePass API keys** — stop `workos:`-prefixing ClinePass API keys (correct for Cline OAuth WorkOS JWTs, wrong for opaque `clinepass_*` keys, causing 401 on every request) and add clinepass token refresh.
+- **Qoder usage to all clients** — coalesce the empty finish-in-delta frame with the later `choices:[]` usage frame so OpenAI and Claude clients receive `prompt_tokens` / `completion_tokens` / cache-hit tokens (the dashboard already saw them). Inlined images now upload through `/api/v2/image/upload` like qodercli and oversized non-image blocks become stubs.
+- **Qoder Responses plumbing reverted** — the merged Qoder work also rewrote shared translator/handler code to attach usage on `response.completed`, changing token accounting for every provider (proxies saw input tokens rise by the 2000-token context buffer); reverted to keep the previous behaviour for non-Qoder providers.
+- **Stale connection locks** — clear `modelLock_*`, `backoffLevel`, `rateLimitedUntil` and `errorCode` whenever a connection is explicitly marked active after successful validation or OAuth re-login (#3810, #3830).
+- **Fable weekly limit** — parse the limit from `limits[]` instead of fabricating a row (#3847).
+- **Antigravity / Gemini contents** — normalize contents and handle intermediate tool responses so multi-turn tool use round-trips correctly.
+- **Video / Vertex path safety** — reject job ids and model ids that would escape the request URL path (base64url decoding accepted arbitrary bytes, letting a crafted id splice a traversal while the Bearer token stayed attached).
+- **Custom model caps from live catalog** — the "Import from /models" flow now carries each model's context/maxOutput through to the stored custom model and its `/v1/models` metadata instead of keeping only boolean capability flags; limits stay provider-scoped and unknown models publish no invented limits.
+- **Dashboard session calling the LLM API** — a logged-in dashboard browser fetch (Model Arena, etc.) reached `/v1/*` with `Authorization: Bearer local` and was rejected as an invalid API key; requests carrying a valid dashboard session are now accepted, for remote/tunnel access too (not just loopback).
+- **OAuth callback host on remote setups** — Antigravity/Gemini callbacks revert to loopback (Google's shared client only accepts it) while every other provider keeps public-URL auto-detect; the dashboard session cookie gets a 24h `maxAge`.
+
+# v0.1.8 (2026-09-10)
+
+## Features
+- **APInex provider** — new OpenAI-compatible provider (`api.apinex.bond/v1`) with live per-connection model catalog and usage/quota tracking (wallet USD, key spend vs limit, daily tokens with midnight-Pacific reset, plan label).
+- **API key allowed models** — restrict a key to a model list with an interactive model selector modal.
+- **API key token limit + periodic reset** — per-key token budget with automatic reset every 5h / 7d / 14d / 30d.
+- **API key RPM/TPM rate limiting** — per-key requests-per-minute and tokens-per-minute caps, enforced in the request path (429 with distinct error codes).
+- **API key IP whitelist** — restrict a key to specific client IPs.
+- **API key editing** — edit name, limits, interval and allowed models from the endpoint page.
+- **Usage page: Export CSV** — one-click export of usage history.
+- **Context Pruning** — optional token-saver mode (off by default) that keeps the system prompt and the most recent N messages (default 20) to shrink long conversations.
+- **Semantic Response Caching** — optional cache for exact-duplicate non-streaming requests (3h TTL, off by default; Bun runtime only — fail-open no-op on Node).
+- **Combo strategy + Model Arena** — fastest/cheapest combo strategies and a new `/dashboard/arena` model comparison UI.
+- **Cline free model lineup** — synced with the official `api.cline.bot` recommended-models feed: free tier (muse-spark-1.3 contributor, deepseek-v4-flash, glm-5.3-flash, solar-pro4, longcat-2.0, laguna-s-2.1:free) plus current recommended paid models.
+- **OpenCode free model lineup** — static fallback list synced with live `zen/v1/models`: muse-spark 1.2/1.3 contributor free, mimo-v2.5-free, ling-3.0-flash-fin-free, nemotron-3.5-lightning-free, big-pickle; dead ids (deepseek-v4-flash-free, nemotron-3-ultra-free) excluded.
+
+## Fixes
+- **Token Harbor free-tier 429** — parse the rolling 7-day reset timestamp from the error (`"Your next rolling 7-day period starts at …"`) and lock the model until the window rolls over (8-day guard) instead of re-poking every 30 minutes.
+- **Cline daily free limit 429** — parse relative retry windows (`"Try again in 19h 46m"`) into an absolute lock until the daily cap resets (26h guard) — no more 2-minute retry churn.
+- **OAuth callback URL on remote/VPS** — auto-detect the public URL (settings.publicUrl > tunnel publicUrl > request host > localhost fallback) so callbacks no longer bounce to localhost.
+- **DB durability** — immediate synchronous persistence on writes and graceful database close before process exit (sqljs adapter + shutdown hook).
+- **localDb shim** — add missing exports used by chat.js.
+- **Console log view** — scrolling up to read history no longer gets yanked back down when new log lines arrive (stick state moved to a ref so scroll and log updates can't race); "Latest" button jumps back down.
+- **Background token refresh logs** — successful refresh cycles emit one summary line per tick instead of three lines per account.
+
+# v0.1.7 (2026-09-08)
+
+## Features
+- **Freebuff: strict model assignment** — gate connections by `assignedModel` when strict mode is on, so a request for model X is served only by the account pinned to X. Toggle + per-connection model dropdown on the Freebuff provider page (built-in + custom LLM models; disabled unless strict is on). Legacy `freebuffModel` field still honored. Great for single-model-per-account setups (e.g. Luna-only) where pacing locks stay scoped to the account that actually serves that model.
+- **Freebuff: model catalog refresh** — matches the upstream waiting-room picker (2026-09-05): added `z-ai/glm-5.3-flash`, `upstage/solar-pro4`, `meta/muse-spark-1.3-contributor`, `anthropic/claude-fable-5` (limited offer); removed withdrawn `deepseek-v4-pro`, `minimax-m3` (404 on claim). Base3 root-agent mapping updated, incl. `base3-free-fable`.
+- **Freebuff: Claude Fable 5 claim gating** — `guardOfferClaim()` GETs `limitedModelOffers` before claiming (per-account, 45s cache), refusing when the wave pool is closed or daily Fable sessions are used up — no long cooldown on a closed pool, and non-Fable models never pay for the offer GET.
+- **Freebuff: Freebucks metered usage + pricing** — Freebucks accounts (2026-09-02+) get a `freebucks` usage block (daily pool, wallet, monthly USD, per-model prices in Freebucks/hr). Dashboard now shows per-row price (`15 Freebucks/hr · promo tagline`) and a Freebucks account header (`10/25 Freebucks daily · resets in 4h 12m · wallet · monthly usage left`). Pricing is server-authoritative — `priceChanges` promos (e.g. Solar Pro 4 Labor Day) expire server-side without a client release. Freebucks exhaustion now marks the account unavailable until the daily Pacific reset (26h cap) instead of retrying every 30s.
+- **Custom model token limits** — context window + max output are preserved through custom-model discovery, storage, dashboard metadata, `/v1/models` and `/v1/models/info` (OpenAI-style `context_length`, `max_input_tokens`, `max_completion_tokens`, `max_output_tokens`). Re-adding a model merges caps; limits are provider-scoped (never leak across providers with the same model id); unknown custom models publish no invented limits.
+
+## Fixes
+- **Error log provider filter** — filter now matches by canonical id, alias, uiAlias, and display name (case-insensitive): "Freebuff", "fb" and "Token Harbor" all resolve (previously exact-match on the stored id/alias only). New records are stored under the canonical id; legacy alias rows still match.
+- **Provider logos (light/dark theme parity)** — DeepSeek TUI uses the official blue whale mark, Kilo Gateway uses the Kilo Code mark, llm7 background cleaned; dark-glyph logos (featherless, venice, vercel, vercel-ai-gateway, openrouter, jcode, tavily, xquik, ollama-search, elevenlabs) auto-invert via CSS only in dark mode.
+- **Freebuff executor** — all requests now send the consistent `Bun/1.3.14` user-agent (was mixed with `codebuff-cli/0.0.138` on the offer GET).
+
+# v0.1.6 (2026-09-07)
+
+## Features
+- **Nous Portal OAuth** — sign in to Nous Research with the Hermes CLI device flow (no API key needed): browser login, automatic token refresh via `X-Nous-Refresh-Token`, and per-model capability table (vision / pdf / audio / video / reasoning / context window, up to 1.31M) baked from the live gateway catalog. API-key auth still works side by side.
+- **Error log: clear all logs** — new trash button in the error-log dashboard plus a `DELETE` endpoint to wipe records at once.
+- **Error log: connection names** — error entries now show the connection name next to the account id, so logs are readable without cross-referencing.
+
+## Fixes
+- **Kiro**: drop the top-level `systemPrompt` field — `GenerateAssistantResponse` rejects any payload carrying it with `400 REQUEST_BODY_INVALID` (same text still reaches the model via `contentPrefix`). Also route non-us-east-1 accounts to the regional Amazon Q endpoint `https://q.<region>.amazonaws.com/generateAssistantResponse` — `codewhisperer.<region>.amazonaws.com` has no DNS record outside us-east-1 and the default hosts reject region-bound tokens with 403.
+- **UI**: model "Test" buttons can now run concurrently on the provider page — testing one model no longer blocks the others.
+- **UI**: API key action buttons no longer overlap on mobile (responsive flex layout + wrapping).
+- **UI**: error-log action buttons wrap properly on narrow screens; "Clear all logs" button styling refined.
+- **Log**: quieter Freebuff pacing-skip messages (less noise in the console).
+
+# v0.1.5 (2026-09-06)
+
+## Fixes
+- **Freebuff**: bounded wait now parses ISO-string `retryAfter` from auth.js (`getEarliestModelLockUntil`) — previously the single-account wait never triggered because `"ISO-string" - Date.now()` is `NaN`, so requests still failed fast with 429 instead of waiting out the pacing gap
+
+# v0.1.4 (2026-09-06)
+
+## Fixes
+- **Combo**: revert empty-stream model fallback introduced in a helper commit — an empty upstream stream now moves to the next model directly (as before), and the orphan regression test is removed
+
+# v0.1.3 (2026-09-06)
+
+## Features
+- **Freebuff**: lower request pacing gap to 20s (closer to a human cadence; tune via `FREEBUFF_PACING_GAP_MS`)
+- **Freebuff**: bounded wait for single-account use — when every account is pacing/model-locked and the earliest lock clears within 30s, the request waits instead of failing with 429 (tune via `FREEBUFF_MAX_WAIT_MS`); other providers keep fail-fast behavior
+
+# v0.1.2 (2026-09-06)
+
+## Features
+- **Dashboard**: add Error Log page (`/dashboard/error-log`) with SQLite-backed error logging and filtering via `GET /api/usage/error-logs`
+- **API**: allow CORS preflight on public LLM API endpoints so browser clients can call `/v1/*` from other origins
+- **Providers**: use official Hyperbolic logo from `app.hyperbolic.ai`
+
+## Fixes
+- **Combo**: fail over to the next panel when a panel returns an empty stream (keepalive-only or immediate `[DONE]`)
+- **Auth**: scope account errors to the model that produced them — withhold unrelated model errors from logs and responses
+- **OAuth**: add 10s timeout to Freebuff session/verify requests so they cannot hang forever
+- **Error Log UI**: fix double-fetch race on initial load
+
+# v0.1.1 (2026-09-06)
+
+## Fixes
+- **Updater**: point version check and update command at the `nggrouter` package (`registry.npmjs.org/nggrouter/latest`, `npm i -g nggrouter@latest --prefer-online`) so the dashboard banner no longer compares against upstream `9router`
+- **Dashboard**: pause console-log auto-scroll when the user scrolls up to read history, with a jump-to-latest button
+
+# v0.1.0 (2026-09-06)
+
+## Features
+- Publish this fork on npm as **`nggrouter`** (bin aliases: `9router`, `nggrouter`)
+- **Providers**: add Freebuff (with ad keeper + pacing + heartbeat), AI Horde, B.AI, Token Harbor, Nous Research, OrcaRouter
+- **Dashboard**: bulk "Import from /models" for AI Horde and OpenCode Free
+- **Usage**: surface Antigravity weekly quota (Gemini / Claude & GPT weekly) next to per-model quota
+- **Providers**: official logos — Fireworks, Cerebras, Freebuff, B.AI, Nous Research, OrcaRouter
+- **Freebuff keeper**: background ad auction + impression ack + occasional `ads.clicked`, 35s request pacing per account, PostHog heartbeat
+
+## Fixes
+- **Codex**: lock every model in an account on usage-limit (`modelLock___all`) so the router stops cycling exhausted accounts
+
+# v0.5.69 (2026-09-05)
+
+## Features
+- **Codex**: add GPT 6.0 Astra (`gpt-6-astra`) with vision, thinking and search capabilities
+- **Usage**: add Claude Fable quota tracker support with weekly window normalization (`weekly fable (7d)`)
+- **Dashboard**: group Antigravity Gemini and Claude quotas in Quota Tracker, prune stale hidden keys
+- **OpenCode Go**: add `muse-spark-1.3-contributor` model and support parallel tool calls on Responses path (#3819)
+- **Providers & Models**: align CodeBuddy-CN catalog/capabilities with server config; add GPT-5.6 Sol, Terra, Luna image aliases on Codex (#3806); refresh Qoder catalog with capability mapping and image pass-through
+- **CLI tools**: replace Copilot MITM with VS Code extension setup guide
+- **Gemini**: persist and replay `thoughtSignature` scoped by session namespace
+
+## Fixes
+- **Claude**: normalize adaptive auto effort (`output_config.effort`) (#3792)
+- **Antigravity**: prevent Google anti-abuse rate limits during multi-account refresh (#3813)
+- **Anthropic-compatible**: forward Claude beta flags to nodes fronting Anthropic (#3797)
+- **Dashboard**: dynamic mode label for local/remote detection (#3801)
+- **Codex**: format reset credit API errors cleanly (#3778)
+- **Security**: guard cowork MCP tools probe against SSRF (#3783)
+- **OpenCode Go**: track OpenCode Go quota (#3791) and send stable session headers (#3800)
+- **Logger**: suppress noisy background token refresh logs
+- **CLI**: export packed `.tgz` directly into workspace root instead of parent directory
+
 # v0.5.65 (2026-09-03)
 
 ## Features

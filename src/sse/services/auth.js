@@ -11,12 +11,12 @@ let selectionMutex = Promise.resolve();
 
 export function filterConnectionsForModel(providerId, connections, model, settings = {}) {
   const override = (settings.providerStrategies || {})[providerId] || {};
-  if (override.strictModelAssignment !== true || !model) {
-    return connections;
-  }
+  if (providerId !== "freebuff" || override.strictModelAssignment !== true || !model) return connections;
   return connections.filter((connection) => {
-    const assignedModel = connection.providerSpecificData?.assignedModel
-      || (providerId === "freebuff" ? connection.providerSpecificData?.freebuffModel : null);
+    const data = connection.providerSpecificData || {};
+    const assignedModel = Object.prototype.hasOwnProperty.call(data, "assignedModel")
+      ? data.assignedModel
+      : (providerId === "freebuff" ? data.freebuffModel : null);
     return assignedModel === model;
   });
 }
@@ -60,22 +60,17 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       const override = (settings.providerStrategies || {})[providerId] || {};
       const strategy = override.rotateStrategy || "none";
       let pickedId = override.proxyPoolId || null;
-      let poolIds = [];
       if (strategy !== "none") {
         const allPools = await getProxyPools({ isActive: true });
-        poolIds = allPools.filter(p => p.proxyUrl).map(p => p.id);
-        // Scope region-aware ("smart") filtering to this provider/model so
-        // pools marked unfit here are skipped.
-        const scope = `${providerId}::${model || "*"}`;
-        pickedId = pickProxyPoolId(poolIds, strategy, providerId, { scope });
-      } else if (override.proxyPoolId) {
-        poolIds = [override.proxyPoolId];
+        const poolIds = allPools.filter(p => p.proxyUrl).map(p => p.id);
+        pickedId = pickProxyPoolId(poolIds, strategy, providerId);
       }
       const resolvedProxy = await resolveConnectionProxyConfig({ proxyPoolId: pickedId || "" });
       return {
         id: "noauth",
         connectionName: "Public",
         isActive: true,
+        authType: "none",
         accessToken: "public",
         providerSpecificData: {
           connectionProxyEnabled: resolvedProxy.connectionProxyEnabled,
@@ -83,21 +78,14 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           connectionNoProxy: resolvedProxy.connectionNoProxy,
           connectionProxyPoolId: resolvedProxy.proxyPoolId || null,
           vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
-          proxyPoolId: resolvedProxy.proxyPoolId || null,
-          strictProxy: resolvedProxy.strictProxy === true,
-          // Let chatCore's pool-scoped retry rotate across the same candidate
-          // pool set (excluding the failed pool) instead of reusing it — this
-          // is what makes per-IP limit retries work for no-auth providers.
-          proxyPoolIds: poolIds,
-          proxyRotationStrategy: strategy,
+          relayType: resolvedProxy.relayType || "",
         },
       };
     }
 
     let connections = await getProviderConnections({ provider: providerId, isActive: true });
-    const settings = await getSettings();
-    const providerOverride = (settings.providerStrategies || {})[providerId] || {};
-    connections = filterConnectionsForModel(providerId, connections, model, settings);
+    const modelFilterSettings = await getSettings();
+    connections = filterConnectionsForModel(providerId, connections, model, modelFilterSettings);
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
 
     if (connections.length === 0) {
@@ -147,21 +135,24 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       }
       const earliest = expiries.sort()[0] || null;
       if (earliest) {
-        const earliestConn = lockedConns[0];
-        log.warn("AUTH", `${provider} | all ${connections.length} accounts locked for ${model || "all"} (${formatRetryAfter(earliest)}) | lastError=${earliestConn?.lastError?.slice(0, 50)}`);
+        const earliestConn = lockedConns.find((c) => getEarliestModelLockUntil(c) === earliest) || lockedConns[0];
+        const errorMatchesModel = earliestConn?.lastErrorModel === (model || null);
+        log.warn("AUTH", `${provider} | all ${connections.length} accounts locked for ${model || "all"} (${formatRetryAfter(earliest)}) | lastError=${errorMatchesModel ? earliestConn?.lastError?.slice(0, 50) : "<withheld>"}`);
         return {
           allRateLimited: true,
           retryAfter: earliest,
           retryAfterHuman: formatRetryAfter(earliest),
-          lastError: earliestConn?.lastError || null,
-          lastErrorCode: earliestConn?.errorCode || null
+          lastError: errorMatchesModel ? earliestConn?.lastError || null : null,
+          lastErrorCode: errorMatchesModel ? earliestConn?.errorCode || null : null
         };
       }
       log.warn("AUTH", `${provider} | all ${connections.length} accounts unavailable`);
       return null;
     }
 
+    const settings = await getSettings();
     // Per-provider strategy overrides global setting
+    const providerOverride = (settings.providerStrategies || {})[providerId] || {};
     const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "fill-first";
 
     let connection;
@@ -218,11 +209,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       connection = availableConnections[0];
     }
 
-    // Scope the region-aware picker to this provider/model (e.g. freebuff::gpt-5.6-luna)
-    const psdForProxy = connection.providerSpecificData?.proxyPoolIds?.length
-      ? { ...connection.providerSpecificData, proxyPoolScope: `${providerId}::${model || ""}` }
-      : connection.providerSpecificData;
-    const resolvedProxy = await resolveConnectionProxyConfig(psdForProxy || {}, connection.id);
+    const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
 
     return {
       authType: connection.authType,
@@ -243,9 +230,10 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         connectionNoProxy: resolvedProxy.connectionNoProxy,
         connectionProxyPoolId: resolvedProxy.proxyPoolId || null,
         vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
-        proxyPoolId: resolvedProxy.proxyPoolId || null,
-        noFitPool: resolvedProxy.noFitPool === true,
-        strictProxy: resolvedProxy.strictProxy === true,
+        // Actual relay kind (vercel|cloudflare|deno) — `vercelRelayUrl` is the
+        // shared transport field name, not the pool's type. Used for log/UI
+        // labelling only; routing still reads vercelRelayUrl.
+        relayType: resolvedProxy.relayType || "",
       },
       connectionId: connection.id,
       // Include current status for optimization check
@@ -295,7 +283,17 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
       ? resetsAtMs - Date.now()
       : providerId === "freebuff"
         ? Math.min(resetsAtMs - Date.now(), 26 * 60 * 60 * 1000)
-        : Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS);
+        // TokenHarbor free tier is a rolling 7-day period — the model is hard-exhausted
+        // until the next window. Re-poking every 30min just burns 429s. Guard at 8d so
+        // a bad server value can't lock forever.
+        : providerId === "tokenharbor"
+          ? Math.min(resetsAtMs - Date.now(), 8 * 24 * 60 * 60 * 1000)
+          // Cline free tier is a daily allowance ("Daily free limit reached …
+          // Try again in 19h 46m") — hard-exhausted until the ~24h window rolls.
+          // Guard at 26h so a bad server value can't lock the model forever.
+          : providerId === "cline"
+            ? Math.min(resetsAtMs - Date.now(), 26 * 60 * 60 * 1000)
+            : Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS);
     newBackoffLevel = 0;
   } else {
     ({ shouldFallback, cooldownMs, newBackoffLevel } = checkFallbackError(status, errorText, backoffLevel));
@@ -310,6 +308,7 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     testStatus: "unavailable",
     lastError: reason,
     errorCode: status,
+    lastErrorModel: model || null,
     lastErrorAt: new Date().toISOString(),
     backoffLevel: newBackoffLevel ?? backoffLevel
   });
@@ -318,7 +317,11 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   const connName = conn?.displayName || conn?.name || conn?.email || connectionId.slice(0, 8);
   log.warn("AUTH", `${connName} locked ${lockKey} for ${Math.round(cooldownMs / 1000)}s [${status}]`);
 
-  if (provider && status && reason) {
+  // Pacing rejects (429 "Freebuff pacing") are expected control-flow — the
+  // bounded wait retries the same account. Skip the loud ❌ line for those;
+  // the [AUTH] lock warn above already covers it. Real errors still log.
+  const isPacingSkip = status === 429 && /Freebuff pacing/i.test(reason);
+  if (provider && status && reason && !isPacingSkip) {
     console.error(`❌ ${provider} [${status}]: ${reason}`);
   }
 
@@ -367,6 +370,7 @@ export async function clearAccountError(connectionId, currentConnection, model =
       testStatus: "active",
       lastError: null,
       errorCode: null,
+      lastErrorModel: null,
       lastErrorAt: null,
       backoffLevel: 0
     });
@@ -397,7 +401,7 @@ export function extractApiKey(request) {
 /**
  * Validate API key (optional - for local use can skip)
  */
-export async function isValidApiKey(apiKey) {
+export async function isValidApiKey(apiKey, requestedModel = null, clientIp = null) {
   if (!apiKey) return false;
-  return await validateApiKey(apiKey);
+  return await validateApiKey(apiKey, requestedModel, clientIp);
 }

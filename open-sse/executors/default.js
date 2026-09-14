@@ -3,7 +3,7 @@ import { PROVIDERS, PROVIDER_OAUTH } from "../config/providers.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE, selectAnthropicBeta } from "../providers/shared.js";
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
 import { OAUTH_ENDPOINTS, buildKimiHeaders } from "../config/appConstants.js";
-import { buildClineHeaders } from "../shared/clineAuth.js";
+import { buildClineHeaders, getAlternateClineToken, clineTokenShape } from "../shared/clineAuth.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
@@ -25,13 +25,8 @@ function setAuth(headers, spec, token) {
 // Resolve auth onto headers from a descriptor.
 function applyAuth(headers, desc, credentials) {
   if (desc.combined) {
-    // combined providers always set the header (legacy behavior, incl. noAuth → "Bearer undefined") —
-    // unless the descriptor opts into preserveHookAuth: a hook then owns the
-    // Authorization value (e.g. Cline needs workos:-prefixed OAuth tokens but
-    // plain API keys, which a single merged token can't express).
-    if (!(desc.preserveHookAuth && headers[desc.header])) {
-      setAuth(headers, desc, credentials.apiKey || credentials.accessToken);
-    }
+    // combined providers always set the header (legacy behavior, incl. noAuth → "Bearer undefined")
+    setAuth(headers, desc, credentials.apiKey || credentials.accessToken);
     if (desc.anthropicVersion && !headers["anthropic-version"]) headers["anthropic-version"] = ANTHROPIC_API_VERSION;
     return;
   }
@@ -45,7 +40,10 @@ function applyAuth(headers, desc, credentials) {
 const HEADER_HOOKS = {
   // Stable device_id from OAuth connection (CLIProxyAPI KimiTokenStorage.DeviceID)
   kimiHeaders: (h, c) => Object.assign(h, buildKimiHeaders(c?.providerSpecificData?.deviceId)),
-  clineHeaders: (h, c) => Object.assign(h, buildClineHeaders(c.apiKey || c.accessToken, {}, { isApiKey: !!c.apiKey })),
+  // `clineAuthShape` is set by execute() when retrying after a 401, to force the
+  // other token shape (see clineAuth.js: login-minted tokens go raw, refresh-minted
+  // ones need the `workos:` prefix, and the prediction can be wrong).
+  clineHeaders: (h, c) => Object.assign(h, buildClineHeaders(c.apiKey || c.accessToken, {}, { shape: c?.clineAuthShape })),
   kilocodeOrg: (h, c) => { if (c.providerSpecificData?.orgId) h["X-Kilocode-OrganizationID"] = c.providerSpecificData.orgId; },
 };
 
@@ -106,6 +104,46 @@ export class DefaultExecutor extends BaseExecutor {
     return { ...body, messages, response_format: { type: "json_object" } };
   }
 
+  // TokenHarbor free-tier 429 carries a precise reset: "Your next rolling
+  // 7-day period starts at 2026-09-12T13:14:06.634411+00:00". Extract it so
+  // markAccountUnavailable locks the model until the period rolls, not a 30m cap.
+parseError(response, bodyText) {
+    if (response.status === 429 && bodyText) {
+      // Tight ISO-8601 capture: date T time ('.'fraction) offset/Z, ending on a digit
+      // so a trailing sentence period can't be swallowed into Date.parse.
+      const iso = /\d{4}-\d{2}-\d{2}T[\d:]+(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)/i;
+      const m = bodyText.match(new RegExp(`(?:next|new)\\s+(?:rolling\\s+)?\\d+-day\\s+period\\s+starts\\s+at\\s+(${iso.source})`, "i"))
+        || bodyText.match(new RegExp(`(?:resets?|next)\\s+(?:at|on)\\s+(${iso.source})`, "i"));
+      if (m) {
+        const resetMs = Date.parse(m[1]);
+        if (Number.isFinite(resetMs) && resetMs > Date.now()) {
+          return { status: 429, message: bodyText, resetsAtMs: resetMs };
+        }
+      }
+      // Relative retry window instead of an absolute timestamp: Cline's free
+      // daily cap → "Try again in 19h 46m". Convert to an absolute reset so
+      // markAccountUnavailable locks until the window passes, not a 2m backoff.
+      const rel = bodyText.match(/try\s+again\s+in\s+(\d+h(?:\s*\d+m)?(?:\s*\d+s)?|\d+m(?:\s*\d+s)?|\d+s)/i);
+      if (rel) {
+        const parts = rel[1].toLowerCase().match(/\d+[hms]/g);
+        let seconds = 0;
+        if (parts) {
+          for (const p of parts) {
+            const v = Number(p.slice(0, -1));
+            if (p.endsWith("h")) seconds += v * 3600;
+            else if (p.endsWith("m")) seconds += v * 60;
+            else seconds += v;
+          }
+        }
+        if (seconds > 0) {
+          const resetMs = Date.now() + seconds * 1000;
+          return { status: 429, message: bodyText, resetsAtMs: resetMs };
+        }
+      }
+    }
+    return super.parseError(response, bodyText);
+  }
+
   buildUrl(model, stream, urlIndex = 0, credentials = null) {
     // Runtime transport (multi-endpoint providers): use the sourceFormat-matched endpoint
     const rt = credentials?.runtimeTransport;
@@ -154,12 +192,37 @@ export class DefaultExecutor extends BaseExecutor {
   buildHeaders(credentials, stream = true, url, model) {
     const rt = credentials?.runtimeTransport;
     const headers = { "Content-Type": "application/json", ...(rt ? rt.headers : this.config.headers) };
+    // Public no-auth providers may declare an upstream sentinel in their
+    // registry headers (AI Horde uses Bearer 0000000000). Do not replace it
+    // with the local synthetic token `public`.
+    const isSyntheticPublicCredential =
+      (credentials?.id === "noauth" || credentials?.connectionId === "noauth") &&
+      !credentials?.apiKey &&
+      (!credentials?.accessToken || credentials.accessToken === "public");
+    if (credentials?.authType === "none" && isSyntheticPublicCredential) {
+      if (stream) headers["Accept"] = "text/event-stream";
+      return headers;
+    }
     const desc = rt?.auth || AUTH_DESCRIPTORS[this.provider] || this.resolveAuthDescriptor();
-    // Hooks run BEFORE auth so dynamic overlays can't clobber the token.
-    for (const hook of desc.hooks || []) HEADER_HOOKS[hook]?.(headers, credentials);
+    // Base auth first, then hooks: a hook exists precisely to refine what the
+    // generic descriptor produced (Cline needs its WorkOS `workos:` token prefix,
+    // Kimi needs its device id), so running it first meant applyAuth overwrote the
+    // refinement and the request went out with the raw token.
     applyAuth(headers, desc, credentials);
+    for (const hook of desc.hooks || []) HEADER_HOOKS[hook]?.(headers, credentials);
 
-    if (this.provider === "claude" && model) {
+    // anthropic-compatible-* nodes serving a real Claude model sit in front of
+    // Anthropic itself (a rotating multi-account proxy, a corporate gateway),
+    // so the request needs the same beta flags the `claude` provider sends:
+    // without `context-management-2025-06-27` upstream rejects the
+    // `context_management` block Claude Code puts in every request with
+    // "context_management: Extra inputs are not permitted" (HTTP 400), and the
+    // combo silently falls through to the next model. The model id gates this:
+    // a node fronting Kimi or GLM answers on its own ids and never matches, so
+    // gateways that would choke on unknown beta flags are left untouched.
+    const isClaudeModel = typeof model === "string" && /^claude-/.test(model);
+    if (model && (this.provider === "claude"
+      || (this.provider?.startsWith?.("anthropic-compatible-") && isClaudeModel))) {
       headers["Anthropic-Beta"] = selectAnthropicBeta(model);
     }
 
@@ -200,6 +263,44 @@ export class DefaultExecutor extends BaseExecutor {
     return headers;
   }
 
+  /**
+   * Cline-only: on a 401, retry once with the token's other wire shape.
+   *
+   * Cline accepts the same access token either bare or with a `workos:` prefix,
+   * and which one works depends on how the token was minted — login-minted goes
+   * bare, refresh-minted needs the prefix. clineAuth.js predicts from the JWT
+   * claims, but a prediction that misses would otherwise cost the account until
+   * someone re-authenticates; the wrong shape answers 401 and the right one 200,
+   * so switching once converts that into a single extra round trip.
+   *
+   * Mutates `credentials.clineAuthShape` as the flag AND to persist the working
+   * choice: the token in the database is the one Cline keeps reissuing, so the
+   * next request starts from the shape that just succeeded instead of re-probing.
+   * Returns false when there is no other shape to try (opaque `clp_` keys, or a
+   * second 401 on the same token) so the caller falls through to normal error
+   * handling.
+   */
+  async retryAlternativeAuth(credentials, log) {
+    if (this.provider !== "cline" && this.provider !== "clinepass") return false;
+
+    const token = credentials?.apiKey || credentials?.accessToken;
+    if (!token) return false;
+
+    // Already switched once for this request — do not loop.
+    if (credentials.clineAuthShape) return false;
+
+    const alternate = getAlternateClineToken(token);
+    if (!alternate) return false;
+
+    const nextShape = clineTokenShape(alternate);
+    credentials.clineAuthShape = nextShape;
+    credentials.accessToken = alternate;
+    if (credentials.apiKey) credentials.apiKey = alternate;
+
+    log?.debug?.("AUTH", `CLINE | 401 on ${clineTokenShape(token)} token, retrying as ${nextShape}`);
+    return true;
+  }
+
   // Generic OAuth refresh for the common {grant_type, refresh_token, client_id[, ...]} shape.
   // grant = REFRESH_GRANTS[provider]; client creds resolved from PROVIDERS or this.config.
   refreshFromGrant(credentials, proxyOptions) {
@@ -223,7 +324,8 @@ export class DefaultExecutor extends BaseExecutor {
       clinepass: () => this.refreshCline(credentials.refreshToken, proxyOptions),
       kimi: () => this.refreshKimi(credentials, proxyOptions),
       "kimi-coding": () => this.refreshKimi(credentials, proxyOptions),
-      kilocode: () => this.refreshKilocode(credentials.refreshToken, proxyOptions)
+      kilocode: () => this.refreshKilocode(credentials.refreshToken, proxyOptions),
+      nous: () => this.refreshNousPortal(credentials, proxyOptions)
     };
 
     const refresher = refreshers[this.provider];
@@ -300,6 +402,25 @@ export class DefaultExecutor extends BaseExecutor {
       accessToken = `workos:${accessToken}`;
     }
     return { accessToken, refreshToken: data?.refreshToken || refreshToken, expiresIn };
+  }
+
+  // Nous Portal: refresh token carried in X-Nous-Refresh-Token header (not body).
+  async refreshNousPortal(credentials, proxyOptions = null) {
+    const refreshToken = credentials.refreshToken;
+    const cfg = PROVIDER_OAUTH["nous"];
+    if (!cfg?.refreshUrl && !cfg?.tokenUrl) return null;
+    const response = await proxyAwareFetch(cfg.refreshUrl || cfg.tokenUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json",
+        "X-Nous-Refresh-Token": refreshToken
+      },
+      body: new URLSearchParams({ grant_type: "refresh_token", client_id: cfg.clientId })
+    }, proxyOptions);
+    if (!response.ok) return null;
+    const tokens = await response.json();
+    return { accessToken: tokens.access_token, refreshToken: tokens.refresh_token || refreshToken, expiresIn: tokens.expires_in };
   }
 
   // CLIProxyAPI DeviceFlowClient.RefreshToken — form body + X-Msh-* headers + stable device_id

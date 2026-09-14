@@ -20,8 +20,7 @@ import {
   formatProviderCredentials as _formatProviderCredentials,
   getAllAccessTokens as _getAllAccessTokens,
   refreshKiroToken as _refreshKiroToken,
-  getRefreshLeadMs as _getRefreshLeadMs,
-  isUnrecoverableRefreshError,
+  getRefreshLeadMs as _getRefreshLeadMs
 } from "open-sse/services/tokenRefresh.js";
 import {
   refreshProviderCredentials as _refreshProviderCredentials,
@@ -125,25 +124,30 @@ function needsProjectId(provider) {
 function _refreshProjectId(provider, connectionId, accessToken) {
   if (!needsProjectId(provider) || !connectionId || !accessToken) return;
 
-  // Evict the stale cached entry so getProjectIdForConnection does a real fetch
+  // Invalidate the stale cached entry so getProjectIdForConnection does a real fetch
   invalidateProjectId(connectionId);
 
-  getProjectIdForConnection(connectionId, accessToken)
-    .then((projectId) => {
-      if (!projectId) return;
-      updateProviderCredentials(connectionId, { projectId }).catch((err) => {
-        log.debug("TOKEN_REFRESH", "Failed to persist refreshed projectId", {
+  // Lazy resolution: Do not eagerly trigger onboardUser during background token refresh.
+  // Eagerly fetching projectId across multiple accounts simultaneously triggers Google Cloud anti-abuse / rate limits.
+  // Runtime handlers (e.g. chat handler) will lazily call getProjectIdForConnection() on demand.
+  if (process.env.EAGER_PROJECT_ID_REFRESH === "true") {
+    getProjectIdForConnection(connectionId, accessToken, provider)
+      .then((projectId) => {
+        if (!projectId) return;
+        updateProviderCredentials(connectionId, { projectId }).catch((err) => {
+          log.debug("TOKEN_REFRESH", "Failed to persist refreshed projectId", {
+            connectionId,
+            error: err?.message ?? err,
+          });
+        });
+      })
+      .catch((err) => {
+        log.debug("TOKEN_REFRESH", "Failed to fetch projectId after token refresh", {
           connectionId,
           error: err?.message ?? err,
         });
       });
-    })
-    .catch((err) => {
-      log.debug("TOKEN_REFRESH", "Failed to fetch projectId after token refresh", {
-        connectionId,
-        error: err?.message ?? err,
-      });
-    });
+  }
 }
 
 // ─── Local-specific: persist credentials to localDb ──────────────────────────
@@ -154,9 +158,11 @@ function _refreshProjectId(provider, connectionId, accessToken) {
  *
  * @param {string} connectionId
  * @param {object} newCredentials
+ * @param {{ quiet?: boolean }} [options]  quiet=true logs at debug level
+ *   (used by the background scheduler to avoid flooding the console log).
  * @returns {Promise<boolean>}
  */
-export async function updateProviderCredentials(connectionId, newCredentials) {
+export async function updateProviderCredentials(connectionId, newCredentials, options = {}) {
   try {
     const updates = {};
 
@@ -191,10 +197,17 @@ export async function updateProviderCredentials(connectionId, newCredentials) {
     if (newCredentials.projectId)            updates.projectId = newCredentials.projectId;
 
     const result = await updateProviderConnection(connectionId, updates);
-    log.info("TOKEN_REFRESH", "Credentials updated in localDb", {
-      connectionId,
-      success: !!result
-    });
+    if (options.quiet) {
+      log.debug("TOKEN_REFRESH", "Credentials updated in localDb", {
+        connectionId,
+        success: !!result
+      });
+    } else {
+      log.info("TOKEN_REFRESH", "Credentials updated in localDb", {
+        connectionId,
+        success: !!result
+      });
+    }
     return !!result;
   } catch (error) {
     log.error("TOKEN_REFRESH", "Error updating credentials in localDb", {
@@ -224,6 +237,10 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
   }
 
   const force = options?.force === true;
+  // Background scheduler passes quiet=true: many OAuth accounts refresh every
+  // tick, and info-level per-account lines would flood the console-log buffer
+  // (~200+ lines/hour). Request-path refreshes stay info-visible.
+  const quiet = options?.quiet === true;
 
   // ── 1. Regular access-token expiry ────────────────────────────────────────
   if (force || _shouldRefreshCredentials(provider, creds)) {
@@ -231,38 +248,31 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
     const remaining = expiresAt ? expiresAt - Date.now() : null;
     const refreshLead = _getRefreshLeadMs(provider);
 
-    log.info("TOKEN_REFRESH", "Refreshing provider credentials proactively", {
-      provider,
-      expiresIn: remaining === null ? null : Math.round(remaining / 1000),
-      refreshLeadMs: refreshLead,
-      lastRefreshAt: creds.lastRefreshAt || null,
-    });
+    if (quiet) {
+      log.debug("TOKEN_REFRESH", "Refreshing provider credentials proactively", {
+        provider,
+        expiresIn: remaining === null ? null : Math.round(remaining / 1000),
+        refreshLeadMs: refreshLead,
+        lastRefreshAt: creds.lastRefreshAt || null,
+      });
+    } else {
+      log.info("TOKEN_REFRESH", "Refreshing provider credentials proactively", {
+        provider,
+        expiresIn: remaining === null ? null : Math.round(remaining / 1000),
+        refreshLeadMs: refreshLead,
+        lastRefreshAt: creds.lastRefreshAt || null,
+      });
+    }
 
     const newCreds = await _refreshProviderCredentials(provider, creds, log);
-    if (isUnrecoverableRefreshError(newCreds)) {
-      // Refresh token is dead (revoked/reused/expired) — retrying forever just
-      // spams xAI's endpoint every tick. Tag the result so the background
-      // scheduler can stop retrying and surface "re-login required".
-      log.warn("TOKEN_REFRESH", `Refresh token unrecoverable for ${provider} — re-login required`, {
-        error: newCreds.error,
-      });
-      return { ...creds, refreshError: newCreds.error, refreshErrorAt: new Date().toISOString() };
-    }
     if (newCreds?.accessToken || newCreds?.apiKey || newCreds?.copilotToken) {
       const mergedCreds = {
         ...newCreds,
-        // Lift any previous refreshBlocked marker — the refresh just succeeded
-        // (covers in-place re-auth flows that keep the same connection row).
-        existingProviderSpecificData: {
-          ...(creds.providerSpecificData || {}),
-          ...(creds.providerSpecificData?.refreshBlocked
-            ? { refreshBlocked: undefined, refreshBlockedAt: undefined }
-            : {}),
-        },
+        existingProviderSpecificData: creds.providerSpecificData,
       };
 
       // Persist to DB (non-blocking path continues below)
-      await updateProviderCredentials(creds.connectionId, mergedCreds);
+      await updateProviderCredentials(creds.connectionId, mergedCreds, { quiet });
 
       creds = {
         ...creds,
@@ -305,7 +315,7 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
 
         await updateProviderCredentials(creds.connectionId, {
           providerSpecificData: updatedSpecific,
-        });
+        }, { quiet });
 
         creds.providerSpecificData = updatedSpecific;
         creds.copilotToken = copilotTokenResult.token;

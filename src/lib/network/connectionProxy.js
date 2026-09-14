@@ -1,5 +1,4 @@
 import { getProxyPoolById } from "@/models";
-import { ensurePoolFitnessHydrated, fitPoolIds } from "open-sse/services/proxyPoolFitness.js";
 
 // Safely normalize any value into a trimmed string.
 function normalizeString(value) {
@@ -14,43 +13,24 @@ const rotateState = new Map(); // providerId → { index }
  * Pick one proxy pool ID from a list based on strategy.
  * round-robin: cycle sequentially (in-memory, resets on restart)
  * random:      uniform random pick
- * smart:       region-aware — skip pools unfit for `scope`, round-robin on the fit subset
  * none/single: return first entry
- * @param {string[]} poolIds
- * @param {string} strategy
- * @param {string} providerId
- * @param {{ scope?: string, excludeIds?: string[] }} [opts]
  */
-export function pickProxyPoolId(poolIds, strategy, providerId, opts = {}) {
+export function pickProxyPoolId(poolIds, strategy, providerId) {
   if (!poolIds || poolIds.length === 0) return null;
-  const { scope = null, excludeIds = [] } = opts || {};
+  if (poolIds.length === 1) return poolIds[0];
 
-  let eligible = poolIds.filter((id) => !(excludeIds || []).includes(id));
-  // Region-aware filtering is opt-in via the "smart" strategy.
-  if (strategy === "smart" && scope) eligible = fitPoolIds(eligible, scope);
-
-  if (eligible.length === 0) {
-    // Freebuff must never reuse a limited-IP egress. Other providers retain
-    // the previous fail-open behavior when every smart candidate is marked
-    // unfit; their executors may have their own pool fallback semantics.
-    if (providerId === "freebuff" && strategy === "smart") return null;
-    eligible = poolIds.filter((id) => !(excludeIds || []).includes(id));
-    if (eligible.length === 0) return null;
-  }
-  if (eligible.length === 1) return eligible[0];
-
-  if (strategy === "round-robin" || strategy === "smart") {
+  if (strategy === "round-robin") {
     const state = rotateState.get(providerId) || { index: -1 };
-    state.index = (state.index + 1) % eligible.length;
+    state.index = (state.index + 1) % poolIds.length;
     rotateState.set(providerId, state);
-    return eligible[state.index];
+    return poolIds[state.index];
   }
 
   if (strategy === "random") {
-    return eligible[Math.floor(Math.random() * eligible.length)];
+    return poolIds[Math.floor(Math.random() * poolIds.length)];
   }
 
-  return eligible[0]; // "none" or unknown
+  return poolIds[0]; // "none" or unknown
 }
 
 /**
@@ -79,127 +59,83 @@ function normalizeLegacyProxy(providerSpecificData = {}) {
  * Resolve final proxy configuration.
  *
  * Priority:
- * 1. Multi-Proxy Pool (new format with rotation)
- * 2. Single Proxy Pool (legacy)
- * 3. Legacy Proxy
- * 4. No Proxy
+ * 1. Proxy Pool
+ * 2. Legacy Proxy
+ * 3. No Proxy
  */
 export async function resolveConnectionProxyConfig(
-  providerSpecificData = {},
-  connectionId = null,
-  excludePoolIds = null
+  providerSpecificData = {}
 ) {
   try {
-    await ensurePoolFitnessHydrated();
-    // Handle new multi-proxy format
-    const proxyPoolIds = providerSpecificData?.proxyPoolIds || [];
-    const proxyRotationStrategy = providerSpecificData?.proxyRotationStrategy || "none";
-    
-    // Handle legacy single-proxy format
-    const legacyProxyPoolId = normalizeString(providerSpecificData?.proxyPoolId);
-    const proxyPoolIdRaw = legacyProxyPoolId === "__none__" ? "" : legacyProxyPoolId;
+    const proxyPoolIdRaw = normalizeString(
+      providerSpecificData?.proxyPoolId
+    );
+
+    // "__none__" means explicitly disabled
+    const proxyPoolId =
+      proxyPoolIdRaw === "__none__" ? "" : proxyPoolIdRaw;
 
     const legacy = normalizeLegacyProxy(providerSpecificData);
-    const multiPoolScope = providerSpecificData?.proxyPoolScope || null;
-    let selectedPoolId = null;
 
     /**
      * -----------------------------
-     * Multi-Proxy Pool Resolution (NEW)
+     * Proxy Pool Resolution
      * -----------------------------
      */
-    if (proxyPoolIds.length > 0) {
-      selectedPoolId = pickProxyPoolId(proxyPoolIds, proxyRotationStrategy, connectionId, { scope: multiPoolScope, excludeIds: excludePoolIds });
-      
-    if (selectedPoolId) {
-        const proxyPool = await getProxyPoolById(selectedPoolId);
-        const proxyUrl = normalizeString(proxyPool?.proxyUrl);
-        const noProxy = normalizeString(proxyPool?.noProxy);
+    if (proxyPoolId) {
+      const proxyPool = await getProxyPoolById(proxyPoolId);
 
-        const isValidPool = proxyPool && proxyPool.isActive === true && proxyUrl;
-
-        if (isValidPool) {
-          /**
-           * Vercel/Cloudflare relay proxies use base URL rewriting
-           * instead of HTTP_PROXY environment variables.
-           */
-          if (proxyPool.type === "vercel" || proxyPool.type === "cloudflare" || proxyPool.type === "deno") {
-            return {
-              source: proxyPool.type,
-              proxyPoolId: selectedPoolId,
-              proxyPool,
-              connectionProxyEnabled: false,
-              connectionProxyUrl: "",
-              connectionNoProxy: noProxy,
-              strictProxy: proxyPool.strictProxy === true,
-              vercelRelayUrl: proxyUrl,
-            };
-          }
-
-          /**
-           * Standard proxy pool
-           */
-          return {
-            source: "pool",
-            proxyPoolId: selectedPoolId,
-            proxyPool,
-            connectionProxyEnabled: true,
-            connectionProxyUrl: proxyUrl,
-            connectionNoProxy: noProxy,
-            strictProxy: proxyPool.strictProxy === true,
-          };
-        }
-      }
-    }
-    if (
-      !selectedPoolId &&
-      proxyRotationStrategy === "smart" &&
-      multiPoolScope?.startsWith("freebuff::")
-    ) {
-      return {
-        source: "pool",
-        proxyPoolId: null,
-        proxyPool: null,
-        noFitPool: true,
-        connectionProxyEnabled: false,
-        connectionProxyUrl: "",
-        connectionNoProxy: "",
-        strictProxy: true,
-      };
-    }
-
-    /**
-     * -----------------------------
-     * Single Proxy Pool Resolution (LEGACY)
-     * -----------------------------
-     */
-    if (proxyPoolIdRaw) {
-      const proxyPool = await getProxyPoolById(proxyPoolIdRaw);
       const proxyUrl = normalizeString(proxyPool?.proxyUrl);
       const noProxy = normalizeString(proxyPool?.noProxy);
-      const isValidPool = proxyPool && proxyPool.isActive === true && proxyUrl;
+
+      const isValidPool =
+        proxyPool &&
+        proxyPool.isActive === true &&
+        proxyUrl;
 
       if (isValidPool) {
+        /**
+         * Vercel/Cloudflare/Deno relay proxies use base URL rewriting
+         * instead of HTTP_PROXY environment variables.
+         *
+         * The URL field is still called `vercelRelayUrl` because all three
+         * relay kinds share the exact same header contract and one unified
+         * transport reads it — the name is a historical artifact, NOT the
+         * pool's kind. Consumers that need to LABEL a relay (logs, UI copy)
+         * must read `relayType`, otherwise a Cloudflare Worker deployed on
+         * *.workers.dev gets reported as a Vercel relay.
+         */
         if (proxyPool.type === "vercel" || proxyPool.type === "cloudflare" || proxyPool.type === "deno") {
           return {
             source: proxyPool.type,
-            proxyPoolId: proxyPoolIdRaw,
+
+            proxyPoolId,
             proxyPool,
+
             connectionProxyEnabled: false,
             connectionProxyUrl: "",
             connectionNoProxy: noProxy,
+
             strictProxy: proxyPool.strictProxy === true,
+
             vercelRelayUrl: proxyUrl,
+            relayType: proxyPool.type,
           };
         }
 
+        /**
+         * Standard proxy pool
+         */
         return {
           source: "pool",
-          proxyPoolId: proxyPoolIdRaw,
+
+          proxyPoolId,
           proxyPool,
+
           connectionProxyEnabled: true,
           connectionProxyUrl: proxyUrl,
           connectionNoProxy: noProxy,
+
           strictProxy: proxyPool.strictProxy === true,
         };
       }
@@ -217,7 +153,7 @@ export async function resolveConnectionProxyConfig(
       return {
         source: "legacy",
 
-        proxyPoolId: proxyPoolIdRaw || null,
+        proxyPoolId: proxyPoolId || null,
         proxyPool: null,
 
         ...legacy,
@@ -232,7 +168,7 @@ export async function resolveConnectionProxyConfig(
     return {
       source: "none",
 
-      proxyPoolId: proxyPoolIdRaw || null,
+      proxyPoolId: proxyPoolId || null,
       proxyPool: null,
 
       ...legacy,

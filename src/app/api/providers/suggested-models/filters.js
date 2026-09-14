@@ -2,9 +2,19 @@
 const KNOWN_FREE_OPENCODE_MODELS = ["big-pickle"];
 
 // Upstream returns "Model is unavailable" for this id (2026-09-02) — re-enable when fixed
-const DEAD_FREE_OPENCODE_MODELS = new Set(["deepseek-v4-flash-free"]);
+const DEAD_FREE_OPENCODE_MODELS = new Set([
+  "deepseek-v4-flash-free", // "Model is unavailable" (2026-09-02, still dead 2026-09-10)
+  "nemotron-3-ultra-free", // upstream [404] Provider returned error (2026-09-10)
+]);
 
 export const FILTERS = {
+  // Public OpenAI-compatible catalogs: import all models returned by /models.
+  "openai": (models) =>
+    models
+      .filter((m) => m && typeof m === "object")
+      .map((m) => ({ id: m.id || m.name || m.model, name: m.name || m.id || m.model }))
+      .filter((m) => typeof m.id === "string" && m.id.trim()),
+
   "openrouter-free": (models) =>
     models
       .filter(
@@ -13,7 +23,12 @@ export const FILTERS = {
           m.pricing?.completion === "0" &&
           m.context_length >= 200000
       )
-      .map((m) => ({ id: m.id, name: m.name, contextLength: m.context_length }))
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        contextLength: m.context_length,
+        maxOutput: m.top_provider?.max_completion_tokens,
+      }))
       .sort((a, b) => b.contextLength - a.contextLength),
 
   "opencode-free": (models) =>
@@ -26,4 +41,17 @@ export const FILTERS = {
     (Array.isArray(models) ? models : [])
       .filter((m) => m.id?.startsWith("mimo") || m.name?.toLowerCase().includes("mimo"))
       .map((m) => ({ id: m.id, name: m.name || m.id })),
+
+  // Nous Portal mirrors OpenRouter's catalog shape; the picker section is
+  // "free models", and on Nous only ids suffixed ":free" are free.
+  "nous": (models) =>
+    (Array.isArray(models) ? models : [])
+      .filter((m) => m.id?.endsWith(":free"))
+      .map((m) => ({ id: m.id, name: m.name || m.id, contextLength: m.context_length }))
+      .sort((a, b) => (b.contextLength || 0) - (a.contextLength || 0)),
+  "airforce-free": (models) =>
+    (Array.isArray(models) ? models : [])
+      .filter((m) => (m.tier === "free" || m.id?.endsWith(":free")) && m.supports_chat === true && (!m.media_type || m.media_type === "chat" || m.media_type === "text"))
+      .map((m) => ({ id: m.id, name: m.name || m.id, contextLength: m.context_length }))
+      .sort((a, b) => String(a.id).localeCompare(String(b.id))),
 };

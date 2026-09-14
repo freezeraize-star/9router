@@ -16,6 +16,7 @@ import {
 import { getMitmStatus, startMitm, loadEncryptedPassword, initDbHooks, restoreToolDNS, removeAllDNSEntriesSync } from "@/mitm/manager";
 import { syncToJson as syncMitmAliasCache } from "@/lib/mitmAliasCache";
 import { killAllBridges } from "@/lib/mcp/stdioSseBridge";
+import { applyFreebuffPacingSettings } from "open-sse/shared/freebuffPacing.js";
 
 // Inject correct paths and DB hooks into manager.js (CJS) from ESM context
 (function bootstrapMitm() {
@@ -83,6 +84,11 @@ async function runHeavyStartup() {
   await cleanupProviderConnections();
   const settings = await getSettings();
 
+  // Prime freebuff request pacing from the dashboard setting so the gap the
+  // user configured is live before the first request (and before the keeper's
+  // first tick). Cheap, synchronous, and safe for non-freebuff setups.
+  applyFreebuffPacingSettings(settings);
+
   // Auto-resume tunnel (once per process)
   if (settings.tunnelEnabled && !g.tunnelAutoResumed) {
     g.tunnelAutoResumed = true;
@@ -119,15 +125,11 @@ async function runHeavyStartup() {
     .then(({ startBackgroundTokenRefresh }) => startBackgroundTokenRefresh())
     .catch((e) => console.log("[BackgroundTokenRefresh] scheduler start failed:", e.message));
 
-  // Pool egress geo probe — fills the Proxy Fitness / Proxy Pools egress column.
-  import("@/lib/network/poolEgressProbe.js")
-    .then(({ startPoolEgressProbe }) => startPoolEgressProbe())
-    .catch((e) => console.log("[PoolEgressProbe] scheduler start failed:", e.message));
-
-  // Periodic in-memory state sweeper — prunes expired fitness/geo/session state.
-  import("@/lib/network/stateSweeper.js")
-    .then(({ startStateSweeper }) => startStateSweeper())
-    .catch((e) => console.log("[StateSweeper] scheduler start failed:", e.message));
+  // Freebuff anti-abuse keeper: ad impressions + PostHog heartbeat + pacing.
+  // Idempotent + fail-open; never affects non-freebuff providers.
+  import("@/sse/services/freebuffKeeper.js")
+    .then(({ startFreebuffKeeper }) => startFreebuffKeeper())
+    .catch((e) => console.log("[FreebuffKeeper] scheduler start failed:", e.message));
 }
 
 function hasQuotaAutoPingEnabled(settings) {

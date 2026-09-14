@@ -9,8 +9,11 @@ import {
 } from "../services/auth.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
+import { isDashboardSession } from "@/lib/auth/dashboardSession";
+import { getClientIp } from "@/lib/auth/loginLimiter";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
+import { resolveActiveSkillIds, readHeaderValue } from "open-sse/rtk/injectSkill.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader.js";
 import { appendPxpipeEvent } from "@/lib/pxpipe/events.js";
@@ -18,13 +21,14 @@ import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { handleComboChat, handleFusionChat, detectRequiredCapabilities } from "open-sse/services/combo.js";
 import { augmentModelsWithCapacityAdapter, withCapacityAdapterStripping, getActiveAdapterStrategy } from "open-sse/services/capacityAdapter.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
-import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
+import { saveErrorLog } from "@/lib/usageDb.js";
+import { computeFreebuffWaitMs } from "open-sse/shared/freebuffPacing.js";
 
 /**
  * Handle chat completion request
@@ -67,23 +71,48 @@ export async function handleChat(request, clientRawRequest = null) {
     log.debug("AUTH", "No API key provided (local mode)");
   }
 
-  // Enforce API key if enabled in settings
-  const settings = await getSettings();
-  if (settings.requireApiKey) {
-    if (!apiKey) {
-      log.warn("AUTH", "Missing API key (requireApiKey=true)");
-      return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
-    }
-    const valid = await isValidApiKey(apiKey);
-    if (!valid) {
-      log.warn("AUTH", "Invalid API key (requireApiKey=true)");
-      return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
-    }
-  }
-
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
+  }
+
+  // Enforce API key if provided or if required by settings — unless the
+  // request carries a valid dashboard session (browser fetch from the Model
+  // Arena & co.), which the middleware already trusts like a local user.
+  const settings = await getSettings();
+  const sessionAuthed = await isDashboardSession(request);
+  if (settings.requireApiKey && !sessionAuthed && !apiKey) {
+    log.warn("AUTH", "Missing API key (requireApiKey=true)");
+    return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
+  }
+
+  if (apiKey && !sessionAuthed) {
+    const clientIp = getClientIp(request);
+    const valid = await isValidApiKey(apiKey, modelStr, clientIp);
+    if (valid === "QUOTA_EXCEEDED") {
+      log.warn("AUTH", "API key quota exceeded");
+      return errorResponse(HTTP_STATUS.TOO_MANY_REQUESTS, "API key token limit exceeded");
+    }
+    if (valid === "RPM_EXCEEDED") {
+      log.warn("AUTH", "API key RPM limit exceeded");
+      return errorResponse(HTTP_STATUS.TOO_MANY_REQUESTS, "API key rate limit exceeded (RPM limit reached)");
+    }
+    if (valid === "TPM_EXCEEDED") {
+      log.warn("AUTH", "API key TPM limit exceeded");
+      return errorResponse(HTTP_STATUS.TOO_MANY_REQUESTS, "API key rate limit exceeded (TPM limit reached)");
+    }
+    if (valid === "IP_NOT_ALLOWED") {
+      log.warn("AUTH", `IP "${clientIp}" not in whitelist for this API key`);
+      return errorResponse(HTTP_STATUS.FORBIDDEN, `Client IP (${clientIp}) is not authorized to use this API key`);
+    }
+    if (valid === "MODEL_NOT_ALLOWED") {
+      log.warn("AUTH", `Model "${modelStr}" not allowed for this API key`);
+      return errorResponse(HTTP_STATUS.FORBIDDEN, `Model "${modelStr}" is not allowed for this API key`);
+    }
+    if (!valid && settings.requireApiKey) {
+      log.warn("AUTH", "Invalid API key (requireApiKey=true)");
+      return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
+    }
   }
 
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
@@ -237,8 +266,23 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {
+        // Freebuff-only bounded wait. With a single account (or every account
+        // pacing/model-locked), waiting out the shortest lock beats failing the
+        // request with 429 — there is nobody to fall back to. Other providers
+        // keep the fail-fast behavior below.
+        if (provider === "freebuff") {
+          const waitMs = computeFreebuffWaitMs(credentials.retryAfter);
+          if (waitMs > 0) {
+            log.info("CHAT", `[${provider}/${model}] all accounts locked — waiting ${Math.ceil(waitMs / 1000)}s to retry same account`);
+            await new Promise((resolve) => setTimeout(resolve, waitMs));
+            // Drop accumulated excludes so the same account can serve again now
+            // that its pacing gap + model lock have elapsed.
+            excludeConnectionIds.clear();
+            continue;
+          }
+        }
         const errorMsg = lastError || credentials.lastError || "Unavailable";
-        const status = HTTP_STATUS.SERVICE_UNAVAILABLE;
+        const status = lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
         log.warn("CHAT", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
         return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
       }
@@ -277,12 +321,24 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       apiKey,
       ccFilterNaming: !!chatSettings.ccFilterNaming,
       rtkEnabled: !!chatSettings.rtkEnabled,
+      contextPruningEnabled: !!chatSettings.contextPruningEnabled,
+      maxMessagesLimit: chatSettings.maxMessagesLimit || 20,
+      semanticCacheEnabled: !!chatSettings.semanticCacheEnabled,
       headroomEnabled: !!chatSettings.headroomEnabled,
       headroomUrl: chatSettings.headroomUrl || DEFAULT_HEADROOM_URL,
       headroomCompressUserMessages: !!chatSettings.headroomCompressUserMessages,
       headroomTimeoutMs: chatSettings.headroomTimeoutMs,
       cavemanEnabled: !!chatSettings.cavemanEnabled,
       cavemanLevel: chatSettings.cavemanLevel || "full",
+      // Header object is built with Object.fromEntries(request.headers.entries()),
+      // so a header value is a STRING, not an array — indexing it would yield the
+      // first character ("on" -> "o"), silently disabling the whole x-skill
+      // feature. Accept either shape so the value survives in both.
+      activeSkillIds: resolveActiveSkillIds(
+        chatSettings.activeSkills,
+        readHeaderValue(clientRawRequest?.headers, "x-skill")
+      ),
+      skillRoutingModes: chatSettings.skillRoutingModes || {},
       ponytailEnabled: !!chatSettings.ponytailEnabled,
       ponytailLevel: chatSettings.ponytailLevel || "full",
       pxpipeEnabled: !!chatSettings.pxpipeEnabled,
@@ -292,23 +348,6 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       pxpipeTransform: chatSettings.pxpipeEnabled ? await getPxpipeTransform() : null,
       onPxpipeEvent: appendPxpipeEvent,
       providerThinking,
-      // Pool-scoped failure recovery: re-resolve proxy config excluding the
-      // failed pool so the request retries via another pool, not a dead end.
-      resolveProxyConfig: async (creds, excludePoolIds = []) => {
-        const psd = { ...(creds?.providerSpecificData || {}) };
-        if (psd.proxyPoolIds?.length) psd.proxyPoolScope = `${provider}::${model}`;
-        const resolved = await resolveConnectionProxyConfig(psd, creds?.connectionId || creds?.id, excludePoolIds);
-        if (!resolved?.proxyPoolId) return null;
-        return {
-          connectionProxyEnabled: resolved.connectionProxyEnabled,
-          connectionProxyUrl: resolved.connectionProxyUrl,
-          connectionNoProxy: resolved.connectionNoProxy,
-          connectionProxyPoolId: resolved.proxyPoolId || null,
-          vercelRelayUrl: resolved.vercelRelayUrl || "",
-          proxyPoolId: resolved.proxyPoolId || null,
-          strictProxy: resolved.strictProxy === true,
-        };
-      },
       // Detect source format by endpoint + body
       sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
       onCredentialsRefreshed: async (newCreds) => {
@@ -349,6 +388,28 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       excludeConnectionIds.add(credentials.connectionId);
       lastError = result.error;
       lastStatus = result.status;
+
+      const errorBody = result.response ? await result.response.clone().json().catch(() => ({})) : {};
+      const errorMessage = errorBody?.error?.message || errorBody?.error?.message || errorBody?.message || result.error;
+      saveErrorLog({
+        endpoint: new URL(request.url).pathname,
+        provider,
+        model,
+        connectionId: credentials.connectionId,
+        comboName: null,
+        statusCode: result.status,
+        errorMessage,
+        request: clientRawRequest?.body || null,
+        providerRequest: null,
+        providerResponse: result.response ? errorBody : null,
+        meta: {
+          fallback: true,
+          retryAfter: result.resetsAtMs ? new Date(result.resetsAtMs).toISOString() : null,
+          retryAfterHuman: credentials.retryAfterHuman,
+          latency: {}
+        }
+      }).catch(() => {});
+
       continue;
     }
 

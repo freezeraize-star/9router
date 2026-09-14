@@ -4,6 +4,7 @@ import { testProxyUrl } from "@/lib/network/proxyTest";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { getDefaultModel } from "open-sse/config/providerModels.js";
 import { resolveOllamaLocalHost, PROVIDERS } from "open-sse/config/providers.js";
+import { CODEX_CLI_VERSION } from "open-sse/config/appConstants.js";
 import {
   refreshProviderCredentials,
   shouldRefreshCredentials,
@@ -27,7 +28,7 @@ const OAUTH_TEST_CONFIG = {
     method: "POST",
     authHeader: "Authorization",
     authPrefix: "Bearer ",
-    extraHeaders: { "Content-Type": "application/json", "originator": "codex_cli_rs", "User-Agent": "codex_cli_rs/0.136.0" },
+    extraHeaders: { "Content-Type": "application/json", "originator": "codex_cli_rs", "User-Agent": `codex_cli_rs/${CODEX_CLI_VERSION}` },
     // Minimal invalid body — triggers fast 400 without consuming quota
     body: JSON.stringify({ model: "gpt-5.3-codex", input: [], stream: false, store: false }),
     // 400 (bad request) means auth succeeded; only 401/403 means token is bad
@@ -90,7 +91,55 @@ const OAUTH_TEST_CONFIG = {
     authHeader: "Authorization",
     authPrefix: "Bearer ",
   },
-  "codebuddy-cn": { tokenExists: true },
+  // CodeBuddy (CN and intl) both expose the billing meter the usage handler
+  // already calls, and it is a real credential check: a valid token answers 200
+  // with the account payload, while an empty, malformed or truncated token
+  // answers 401. That makes it strictly better than the `tokenExists` stub these
+  // used to carry, which reported "valid" for any non-empty string and so could
+  // not notice an expired or revoked login.
+  //
+  // POST with an empty JSON body is correct for this endpoint; GET returns 404.
+  // Only the Authorization header is required — no User-Agent or X-Product
+  // gating — but the CLI's headers are sent so the probe looks like the traffic
+  // the provider expects rather than a bare request.
+  //
+  // Both are refreshable: refreshOAuthToken handles codebuddy-cn and
+  // codebuddy-intl, and each uses its own X-Domain (copilot.tencent.com vs
+  // www.codebuddy.ai), so a 401 here can be retried against a fresh token.
+  "codebuddy-cn": {
+    url: "https://copilot.tencent.com/v2/billing/meter/get-user-resource",
+    method: "POST",
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    extraHeaders: {
+      "Content-Type": "application/json",
+      "User-Agent": "CLI/2.108.1 CodeBuddy/2.108.1",
+      "X-Product": "SaaS",
+      "X-IDE-Type": "CLI",
+      "X-IDE-Name": "CLI",
+      "x-requested-with": "XMLHttpRequest",
+      "x-codebuddy-request": "1",
+    },
+    body: "{}",
+    refreshable: true,
+  },
+  "codebuddy-intl": {
+    url: "https://www.codebuddy.ai/v2/billing/meter/get-user-resource",
+    method: "POST",
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    extraHeaders: {
+      "Content-Type": "application/json",
+      "User-Agent": "CLI/2.108.1 CodeBuddy/2.108.1",
+      "X-Product": "SaaS",
+      "X-IDE-Type": "CLI",
+      "X-IDE-Name": "CLI",
+      "x-requested-with": "XMLHttpRequest",
+      "x-codebuddy-request": "1",
+    },
+    body: "{}",
+    refreshable: true,
+  },
   kimchi: {
     url: KIMCHI_CONFIG.validationUrl || "https://api.cast.ai/v1/llm/openai/supported-providers",
     method: "GET",
@@ -102,24 +151,9 @@ const OAUTH_TEST_CONFIG = {
     },
     refreshable: false,
   },
-  freebuff: {
-    // The session endpoint doubles as the auth probe: GET never claims a
-    // session (POST would burn 1.0 unit of the daily quota). Mirrors the usage
-    // handler: 401 = bad token, 403 = region/account gate (token still valid),
-    // 404 = no session row yet (pre-join, token valid). No refresh path —
-    // when the authToken dies the user re-logs in.
-    url: "https://www.codebuff.com/api/v1/freebuff/session",
-    method: "GET",
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-    extraHeaders: { Accept: "application/json", "User-Agent": "codebuff-cli/0.0.138" },
-    acceptStatuses: [403, 404],
-    softFailMessage: {
-      403: "Connected, but Freebuff is gated (403) — country blocked or account banned.",
-    },
-  },
   // Grok CLI / Grok Build — probe /v1/user (no inference quota). Headers mirror official CLI.
-  "grok-cli": {    url: PROVIDERS["grok-cli"]?.userUrl || "https://cli-chat-proxy.grok.com/v1/user",
+  "grok-cli": {
+    url: PROVIDERS["grok-cli"]?.userUrl || "https://cli-chat-proxy.grok.com/v1/user",
     method: "GET",
     authHeader: "Authorization",
     authPrefix: "Bearer ",
@@ -139,6 +173,22 @@ const OAUTH_TEST_CONFIG = {
     softFailMessage: {
       402: "Connected, but Grok Build credits are exhausted (spending limit). Add credits or upgrade SuperGrok.",
     },
+  },
+  // Freebuff — probe the session endpoint (GET never claims a session).
+  freebuff: {
+    url: "https://www.codebuff.com/api/v1/freebuff/session",
+    method: "GET",
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    extraHeaders: {
+      Accept: "application/json",
+      "User-Agent": "Bun/1.3.14",
+    },
+    acceptStatuses: [403, 404],
+    softFailMessage: {
+      403: "Connected, but Freebuff is gated (403) — country blocked or account banned.",
+    },
+    refreshable: false,
   },
 };
 
@@ -466,7 +516,7 @@ async function fetchWithConnectionProxy(url, options = {}, effectiveProxy = null
     options.signal = AbortSignal.timeout(15000);
   }
 
-  // Vercel relay: forward via relay URL
+  // Relay (vercel/cloudflare/deno): forward via the shared relay URL field.
   if (effectiveProxy?.vercelRelayUrl) {
     const { proxyAwareFetch } = await import("open-sse/utils/proxyFetch.js");
     return proxyAwareFetch(url, options, {
@@ -583,6 +633,14 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
       }
       case "openrouter": {
         const res = await fetchWithConnectionProxy("https://openrouter.ai/api/v1/auth/key", { headers: { Authorization: `Bearer ${connection.apiKey}` } }, effectiveProxy);
+        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
+      }
+      case "tokenrouter": {
+        // OpenAI-compatible gateway; the registry's validateUrl is the canonical probe.
+        const url = PROVIDERS.tokenrouter?.validateUrl || "https://api.tokenrouter.com/v1/models";
+        const res = await fetchWithConnectionProxy(url, {
+          headers: { Authorization: `Bearer ${connection.apiKey}` },
+        }, effectiveProxy);
         return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
       }
       case "glm": {
@@ -816,6 +874,49 @@ case "llm7": {
         }, effectiveProxy);
         return { valid: res.ok, error: res.ok ? null : "Invalid API key or base URL" };
       }
+      case "bai": {
+        const url = PROVIDERS.bai?.modelsUrl || "https://api.b.ai/v1/models";
+        const res = await fetchWithConnectionProxy(url, {
+          headers: { Authorization: `Bearer ${connection.apiKey}` },
+        }, effectiveProxy);
+        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
+      }
+      case "tokenharbor": {
+        const url = PROVIDERS.tokenharbor?.modelsUrl || "https://tokenharbor.ai/v1/models";
+        const res = await fetchWithConnectionProxy(url, {
+          headers: { Authorization: `Bearer ${connection.apiKey}` },
+        }, effectiveProxy);
+        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
+      }
+      case "apinex": {
+        const url = PROVIDERS.apinex?.modelsUrl || "https://api.apinex.bond/v1/models";
+        const res = await fetchWithConnectionProxy(url, {
+          headers: { Authorization: `Bearer ${connection.apiKey}` },
+        }, effectiveProxy);
+        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
+      }
+      case "unikey": {
+        const url = PROVIDERS.unikey?.modelsUrl || "https://www.getunikey.ai/v1/models";
+        const res = await fetchWithConnectionProxy(url, {
+          headers: { Authorization: `Bearer ${connection.apiKey}` },
+        }, effectiveProxy);
+        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
+      }
+      case "nous": {
+        // /v1/models is public on Nous Research — probing it would always pass.
+        // Probe /chat/completions with a known-free model; only 401/403 = bad key.
+        const { probeNousChat } = await import("../models/nous.js");
+        return probeNousChat(connection.apiKey, (url, opts) =>
+          fetchWithConnectionProxy(url, opts, effectiveProxy)
+        );
+      }
+      case "orcarouter": {
+        // /v1/models works without a key on OrcaRouter — probe chat instead.
+        const { probeOrcarouterChat } = await import("../models/orcarouter.js");
+        return probeOrcarouterChat(connection.apiKey, (url, opts) =>
+          fetchWithConnectionProxy(url, opts, effectiveProxy)
+        );
+      }
       case "kimchi": {
         // Dual-auth: same validation endpoint as the OAuth flow — the token (API key
         // or OAuth access token) is sent as Authorization: Bearer.
@@ -830,8 +931,53 @@ case "llm7": {
         }, effectiveProxy);
         return { valid: res.ok, error: res.ok ? null : "Invalid API key", refreshed: false };
       }
-      default:
+      default: {
+        // Generic fallback: any provider whose registry entry declares a validateUrl
+        // can be tested without a bespoke case. 13 providers were stuck on
+        // "Provider test not supported" purely because nobody had written a case for
+        // them, even though the registry already knew how to reach them — poolside,
+        // venice, sambanova, featherless, kilo-gateway and friends. Validating the
+        // URL with the key is exactly what the bespoke cases below do, so this is the
+        // same probe with the URL taken from config instead of hardcoded.
+        //
+        // Providers with no validateUrl (audio/image/search/embedding vendors, whose
+        // APIs are not GET /models-shaped) still fall through to the explicit error —
+        // a wrong probe would report a working key as broken.
+        const validateUrl = PROVIDERS[connection.provider]?.validateUrl;
+        if (validateUrl) {
+          const res = await fetchWithConnectionProxy(validateUrl, {
+            headers: { Authorization: `Bearer ${connection.apiKey}` },
+          }, effectiveProxy);
+          // 401/403 mean the key was refused; 404 means the configured URL is wrong
+          // rather than the key. Only those three count as a failure — a 200 is the
+          // clean pass, and anything else (e.g. 429 rate limit, 5xx) proves the
+          // endpoint answered and the key was not rejected, which is all a models
+          // probe can establish.
+          if (res.status === 401 || res.status === 403) {
+            return { valid: false, error: "Invalid API key" };
+          }
+          if (res.status === 404) {
+            return { valid: false, error: "Models endpoint not found" };
+          }
+          // Some upstreams serve /v1/models publicly, so a 200 would otherwise be read
+          // as "key accepted" when the endpoint never looked at it (checked live:
+          // venice, sambanova, kilo-gateway, api-airforce all answer 200 to a garbage
+          // key). Re-probe without credentials to tell the two apart, and report a
+          // soft warning instead of a false pass when the list is open. The connection
+          // still counts as reachable — we simply cannot vouch for the key from here.
+          if (res.status === 200) {
+            const anon = await fetchWithConnectionProxy(validateUrl, {}, effectiveProxy);
+            if (anon.status === 200) {
+              return {
+                valid: true,
+                warning: "Endpoint reachable, but the provider serves its model list publicly — the API key could not be verified.",
+              };
+            }
+          }
+          return { valid: true, error: null };
+        }
         return { valid: false, error: "Provider test not supported" };
+      }
     }
   } catch (err) {
     return { valid: false, error: err.message };
@@ -845,7 +991,7 @@ export async function testSingleConnection(id) {
   const connection = await getProviderConnectionById(id);
   if (!connection) return { valid: false, error: "Connection not found", latencyMs: 0, testedAt: new Date().toISOString() };
 
-  const effectiveProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {}, connection.id);
+  const effectiveProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
 
   if (effectiveProxy.connectionProxyEnabled && effectiveProxy.connectionProxyUrl && !effectiveProxy.vercelRelayUrl) {
     const proxyResult = await testProxyUrl({ proxyUrl: effectiveProxy.connectionProxyUrl });

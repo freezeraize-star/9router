@@ -146,12 +146,13 @@ export async function GET(request, { params }) {
     }
 
     // Resolve connection proxy config; force strictProxy=false so quota/refresh fall back to direct on failure
-    const proxyConfig = await resolveConnectionProxyConfig(connection.providerSpecificData, connection.id);
+    const proxyConfig = await resolveConnectionProxyConfig(connection.providerSpecificData);
     const proxyOptions = {
       connectionProxyEnabled: proxyConfig.connectionProxyEnabled === true,
       connectionProxyUrl: proxyConfig.connectionProxyUrl || "",
       connectionNoProxy: proxyConfig.connectionNoProxy || "",
       vercelRelayUrl: proxyConfig.vercelRelayUrl || "",
+      relayType: proxyConfig.relayType || "",
       strictProxy: false,
     };
 

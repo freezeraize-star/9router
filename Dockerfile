@@ -1,17 +1,16 @@
 # syntax=docker/dockerfile:1.7
-# Pinned by digest so a base-image refresh cannot silently bump npm and break
-# `npm ci` against the committed lockfile (see v1.0.9 npm ci EUSAGE failure).
-ARG NODE_IMAGE=node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
+ARG NODE_IMAGE=node:22-alpine
 FROM ${NODE_IMAGE} AS base
 WORKDIR /app
+# CN mirror for apk (used by builder and runner stages)
+RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories
 
 FROM base AS builder
 
 RUN apk --no-cache upgrade && apk --no-cache add python3 make g++ linux-headers
 
-COPY package.json package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm \
-  npm ci
+COPY package.json ./
+RUN npm install --registry=https://registry.npmmirror.com
 
 COPY . ./
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -55,10 +54,6 @@ RUN apk --no-cache upgrade && apk --no-cache add su-exec && \
   chmod +x /entrypoint.sh
 
 EXPOSE 20128
-
-# Health: Next serves /api/health (dashboardGuard public path).
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:20128/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "custom-server.js"]

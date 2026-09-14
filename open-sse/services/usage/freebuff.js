@@ -80,7 +80,7 @@ export async function getFreebuffUsage(accessToken, providerSpecificData, proxyO
         method: "GET",
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          "User-Agent": "codebuff-cli/0.0.138",
+          "User-Agent": "Bun/1.3.14",
           Accept: "application/json",
         },
       },
@@ -123,6 +123,18 @@ export async function getFreebuffUsage(accessToken, providerSpecificData, proxyO
       rateLimits[data.model] = data.rateLimit;
     }
 
+    // `freeWindows` is the account-level session allowance (day/week/month) the
+    // server has sent since 2026-09. It is NOT per model, so it is reported as
+    // its own block instead of being duplicated onto every model row.
+    const windows = data.freeWindows && typeof data.freeWindows === "object" ? data.freeWindows : null;
+    const windowRows = windows
+      ? [
+          { label: "Day", used: Number(windows.dayUsed), limit: Number(windows.dayLimit), resetAt: windows.dayResetAt },
+          { label: "Week", used: Number(windows.weekUsed), limit: Number(windows.weekLimit), resetAt: null },
+          { label: "Month", used: Number(windows.monthUsed), limit: Number(windows.monthLimit), resetAt: windows.monthResetAt },
+        ].filter((row) => Number.isFinite(row.limit) && row.limit > 0)
+      : [];
+
     const quotas = {};
     for (const [model, rl] of Object.entries(rateLimits)) {
       if (!rl || typeof rl !== "object") continue;
@@ -160,6 +172,17 @@ export async function getFreebuffUsage(accessToken, providerSpecificData, proxyO
           recurring: true,
           price: Number.isFinite(Number(price)) ? Number(price) : undefined,
           ...(freebucks.priceNotices?.[model] ? { priceNote: freebucks.priceNotices[model] } : {}),
+          // Peak surcharge (e.g. DeepSeek 2x during expensive hours) — server
+          // sends peak.modelIds + surcharge + endsAt; the base price already
+          // reflected it (server prices), so the row is flagged so the UI can
+          // show the badge instead of a misleading base rate.
+          ...(freebucks.peak?.modelIds?.includes(model)
+            ? {
+                peak: true,
+                peakSurcharge: freebucks.peak.surcharge,
+                peakEndsAt: freebucks.peak.endsAt || null,
+              }
+            : {}),
           ...(MODEL_LABELS[model] ? { displayName: MODEL_LABELS[model] } : {}),
         };
       }
@@ -174,6 +197,13 @@ export async function getFreebuffUsage(accessToken, providerSpecificData, proxyO
         wallet: {
           balance: Number.isFinite(Number(freebucks.wallet?.balance)) ? Number(freebucks.wallet.balance) : 0,
         },
+        // Server-authorized quota exemption: new sessions remain usable at zero
+        // balance (mirrors getFreebucksModelMeter canStart).
+        ...(freebucks.quotaExempt === true ? { quotaExempt: true } : {}),
+        // LEGACY: provider spend caps were retired upstream on 2026-09-08
+        // (`spend`/`monthly` are now @deprecated and new servers omit them).
+        // Kept so an older server that still sends the block is still rendered
+        // instead of silently losing the row.
         ...(freebucks.monthly && Number.isFinite(Number(freebucks.monthly.remainingUsd))
           ? {
               monthly: {
@@ -187,10 +217,21 @@ export async function getFreebuffUsage(accessToken, providerSpecificData, proxyO
     }
 
     const plan = data.accessTier === "limited" ? "Freebuff (Limited)" : "Freebuff";
-    if (Object.keys(quotas).length === 0) {
+    const freeWindows = windowRows.length
+      ? windowRows.map((row) => ({
+          label: row.label,
+          used: Number.isFinite(row.used) ? row.used : 0,
+          total: row.limit,
+          resetAt: row.resetAt || null,
+          recurring: true,
+          unlimited: false,
+        }))
+      : null;
+    if (Object.keys(quotas).length === 0 && !freeWindows) {
       return { plan, message: "Freebuff connected. No session quota to report right now." };
     }
     const out = { plan, quotas };
+    if (freeWindows) out.freeWindows = freeWindows;
     if (freebucksSummary) out.freebucks = freebucksSummary;
     return out;
   } catch (error) {

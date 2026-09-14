@@ -1,6 +1,6 @@
 services:
   9router:
-    image: freezeraize-star/9router:latest
+    image: decolua/9router:latest
     container_name: 9router
     restart: always
     ports:

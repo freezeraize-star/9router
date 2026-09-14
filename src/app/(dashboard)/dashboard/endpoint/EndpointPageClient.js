@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import PropTypes from "prop-types";
-import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal } from "@/shared/components";
+import { Card, Button, Input, Select, Modal, CardSkeleton, Toggle, ConfirmModal, ModelSelectModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import {
   TUNNEL_BENEFITS,
@@ -17,11 +17,38 @@ import EndpointRow from "./components/EndpointRow";
 import StatusAlert from "./components/StatusAlert";
 import Tooltip from "./components/Tooltip";
 import SecurityWarning from "./components/SecurityWarning";
+
+function formatTokensNumber(num) {
+  if (!num || num <= 0) return "0";
+  if (num >= 1_000_000_000) return (num / 1_000_000_000).toFixed(2) + "B";
+  if (num >= 1_000_000) return (num / 1_000_000).toFixed(2) + "M";
+  if (num >= 1_000) return (num / 1_000).toFixed(1) + "K";
+  return num.toLocaleString();
+}
+
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
+  const [newKeyLimit, setNewKeyLimit] = useState("");
+  const [newKeyReset, setNewKeyReset] = useState("never");
+  const [newKeyAllowedModels, setNewKeyAllowedModels] = useState("*");
+  const [newKeyRpm, setNewKeyRpm] = useState("");
+  const [newKeyTpm, setNewKeyTpm] = useState("");
+  const [newKeyIpWhitelist, setNewKeyIpWhitelist] = useState("");
+  const [editingKey, setEditingKey] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [editLimit, setEditLimit] = useState("");
+  const [editReset, setEditReset] = useState("never");
+  const [editAllowedModels, setEditAllowedModels] = useState("*");
+  const [editRpm, setEditRpm] = useState("");
+  const [editTpm, setEditTpm] = useState("");
+  const [editIpWhitelist, setEditIpWhitelist] = useState("");
+  const [activeProviders, setActiveProviders] = useState([]);
+  const [modelAliases, setModelAliases] = useState({});
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  const [pickerTarget, setPickerTarget] = useState(null); // 'create' | 'edit'
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
 
@@ -78,11 +105,10 @@ export default function APIPageClient({ machineId }) {
   const [visibleKeys, setVisibleKeys] = useState(new Set());
 
   // Client-side local/remote detection (UI hint only, not a security gate)
-  const [isRemoteHost, setIsRemoteHost] = useState(false);
-  useEffect(() => {
-    if (typeof window !== "undefined")
-      setIsRemoteHost(!["localhost", "127.0.0.1", "::1"].includes(window.location.hostname));
-  }, []);
+  const [isRemoteHost] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+  });
 
   const { copied, copy } = useCopyToClipboard();
 
@@ -261,6 +287,27 @@ export default function APIPageClient({ machineId }) {
         const data = await res.json();
         return data.keys || [];
       };
+
+      const fetchProvidersAndAliases = async () => {
+        try {
+          const [providersRes, aliasesRes] = await Promise.all([
+            fetch("/api/providers"),
+            fetch("/api/models/alias"),
+          ]);
+          if (providersRes.ok) {
+            const pData = await providersRes.json();
+            setActiveProviders(pData.connections || []);
+          }
+          if (aliasesRes.ok) {
+            const aData = await aliasesRes.json();
+            setModelAliases(aData.aliases || {});
+          }
+        } catch (e) {
+          console.error("Error fetching providers/aliases:", e);
+        }
+      };
+
+      fetchProvidersAndAliases();
 
       let existing = await fetchKeys();
       // Auto-provision a default key for first-time users so the endpoint works out of the box.
@@ -622,6 +669,44 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  const parseAllowedModelsList = (str) => {
+    if (!str || str.trim() === "*" || str.trim() === "") return [];
+    return str
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  };
+
+  const handleSelectModelForPicker = (model) => {
+    const modelVal = model.value;
+    if (pickerTarget === "create") {
+      const currentList = parseAllowedModelsList(newKeyAllowedModels);
+      if (!currentList.includes(modelVal)) {
+        const nextList = [...currentList, modelVal];
+        setNewKeyAllowedModels(nextList.join(", "));
+      }
+    } else if (pickerTarget === "edit") {
+      const currentList = parseAllowedModelsList(editAllowedModels);
+      if (!currentList.includes(modelVal)) {
+        const nextList = [...currentList, modelVal];
+        setEditAllowedModels(nextList.join(", "));
+      }
+    }
+  };
+
+  const handleDeselectModelForPicker = (model) => {
+    const modelVal = model.value;
+    if (pickerTarget === "create") {
+      const currentList = parseAllowedModelsList(newKeyAllowedModels);
+      const nextList = currentList.filter((m) => m !== modelVal);
+      setNewKeyAllowedModels(nextList.length === 0 ? "*" : nextList.join(", "));
+    } else if (pickerTarget === "edit") {
+      const currentList = parseAllowedModelsList(editAllowedModels);
+      const nextList = currentList.filter((m) => m !== modelVal);
+      setEditAllowedModels(nextList.length === 0 ? "*" : nextList.join(", "));
+    }
+  };
+
   const handleCreateKey = async () => {
     if (!newKeyName.trim()) return;
 
@@ -629,7 +714,15 @@ export default function APIPageClient({ machineId }) {
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newKeyName }),
+        body: JSON.stringify({
+          name: newKeyName,
+          tokenLimit: newKeyLimit ? Number(newKeyLimit) : 0,
+          resetInterval: newKeyReset,
+          allowedModels: newKeyAllowedModels.trim() || "*",
+          rpmLimit: newKeyRpm ? Number(newKeyRpm) : 0,
+          tpmLimit: newKeyTpm ? Number(newKeyTpm) : 0,
+          ipWhitelist: newKeyIpWhitelist.trim(),
+        }),
       });
       const data = await res.json();
 
@@ -637,11 +730,47 @@ export default function APIPageClient({ machineId }) {
         setCreatedKey(data.key);
         await fetchData();
         setNewKeyName("");
+        setNewKeyLimit("");
+        setNewKeyReset("never");
+        setNewKeyAllowedModels("*");
+        setNewKeyRpm("");
+        setNewKeyTpm("");
+        setNewKeyIpWhitelist("");
         setShowAddModal(false);
       }
     } catch (error) {
       console.log("Error creating key:", error);
     }
+  };
+
+  const handleUpdateKeyQuota = async (id, data) => {
+    try {
+      const res = await fetch(`/api/keys/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        await fetchData();
+        setEditingKey(null);
+      }
+    } catch (error) {
+      console.log("Error updating key:", error);
+    }
+  };
+
+  const handleManualResetUsage = async (key) => {
+    setConfirmState({
+      title: "Reset Token Usage",
+      message: `Reset used tokens for "${key.name}" back to 0?`,
+      onConfirm: async () => {
+        setConfirmState(null);
+        await handleUpdateKeyQuota(key.id, {
+          usedTokens: 0,
+          lastResetAt: new Date().toISOString(),
+        });
+      },
+    });
   };
 
   const handleDeleteKey = async (id) => {
@@ -696,14 +825,12 @@ export default function APIPageClient({ machineId }) {
     });
   };
 
-  const [baseUrl, setBaseUrl] = useState("/v1");
-
-  // Hydration fix: Only access window on client side
-  useEffect(() => {
+  const [baseUrl] = useState(() => {
     if (typeof window !== "undefined") {
-      setBaseUrl(`${window.location.origin}/v1`);
+      return `${window.location.origin}/v1`;
     }
-  }, []);
+    return "/v1";
+  });
 
   if (loading) {
     return (
@@ -1010,17 +1137,17 @@ export default function APIPageClient({ machineId }) {
             {keys.map((key) => (
               <div
                 key={key.id}
-                className={`group flex items-center justify-between py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0 ${key.isActive === false ? "opacity-60" : ""}`}
+                className={`group flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0 ${key.isActive === false ? "opacity-60" : ""}`}
               >
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium">{key.name}</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <code className="text-xs text-text-muted font-mono">
+                  <div className="flex flex-wrap items-center gap-2 mt-1">
+                    <code className="text-xs text-text-muted font-mono break-all">
                       {visibleKeys.has(key.id) ? key.key : maskKey(key.key)}
                     </code>
                     <button
                       onClick={() => toggleKeyVisibility(key.id)}
-                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all shrink-0"
                       title={visibleKeys.has(key.id) ? "Hide key" : "Show key"}
                     >
                       <span className="material-symbols-outlined text-[14px]">
@@ -1029,7 +1156,7 @@ export default function APIPageClient({ machineId }) {
                     </button>
                     <button
                       onClick={() => copy(key.key, key.id)}
-                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all shrink-0"
                     >
                       <span className="material-symbols-outlined text-[14px]">
                         {copied === key.id ? "check" : "content_copy"}
@@ -1039,11 +1166,62 @@ export default function APIPageClient({ machineId }) {
                   <p className="text-xs text-text-muted mt-1">
                     Created {new Date(key.createdAt).toLocaleDateString()}
                   </p>
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <span className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary font-medium">
+                      Usage: {formatTokensNumber(key.usedTokens)} / {key.tokenLimit > 0 ? formatTokensNumber(key.tokenLimit) + " tokens" : "Unlimited"}
+                    </span>
+                    {key.resetInterval && key.resetInterval !== "never" && (
+                      <span className="text-xs px-2 py-0.5 rounded bg-gray-500/10 text-text-muted">
+                        Reset: every {key.resetInterval}
+                      </span>
+                    )}
+                    <span className="text-xs px-2 py-0.5 rounded bg-blue-500/10 text-blue-500 font-medium">
+                      Models: {key.allowedModels && key.allowedModels !== "*" ? key.allowedModels : "All"}
+                    </span>
+                    {(key.rpmLimit > 0 || key.tpmLimit > 0) && (
+                      <span className="text-xs px-2 py-0.5 rounded bg-purple-500/10 text-purple-500 font-medium">
+                        Rate: {key.rpmLimit > 0 ? `${key.rpmLimit} RPM` : ""}{key.rpmLimit > 0 && key.tpmLimit > 0 ? " · " : ""}{key.tpmLimit > 0 ? `${formatTokensNumber(key.tpmLimit)} TPM` : ""}
+                      </span>
+                    )}
+                    {key.ipWhitelist && (
+                      <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-500 font-medium">
+                        IP Guard: Active
+                      </span>
+                    )}
+                    {key.tokenLimit > 0 && (key.usedTokens || 0) >= key.tokenLimit && (
+                      <span className="text-xs px-2 py-0.5 rounded bg-red-500/10 text-red-500 font-semibold">
+                        Quota Exceeded
+                      </span>
+                    )}
+                  </div>
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+<div className="flex items-center gap-1 sm:gap-2 self-start sm:self-auto">
+                  <button
+                    onClick={() => {
+                      setEditingKey(key);
+                      setEditName(key.name || "");
+                      setEditLimit(key.tokenLimit ? String(key.tokenLimit) : "");
+                      setEditReset(key.resetInterval || "never");
+                      setEditAllowedModels(key.allowedModels || "*");
+                      setEditRpm(key.rpmLimit ? String(key.rpmLimit) : "");
+                      setEditTpm(key.tpmLimit ? String(key.tpmLimit) : "");
+                      setEditIpWhitelist(key.ipWhitelist || "");
+                    }}
+                    className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                    title="Edit key settings & quota"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">edit</span>
+                  </button>
+                  <button
+                    onClick={() => handleManualResetUsage(key)}
+                    className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                    title="Reset used tokens to 0"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">restart_alt</span>
+                  </button>
                   <Toggle
                     size="sm"
                     checked={key.isActive ?? true}
@@ -1092,7 +1270,98 @@ export default function APIPageClient({ machineId }) {
             onChange={(e) => setNewKeyName(e.target.value)}
             placeholder="Production Key"
           />
-          <div className="flex gap-2">
+          <Input
+            label="Token Limit (0 for unlimited)"
+            type="number"
+            value={newKeyLimit}
+            onChange={(e) => setNewKeyLimit(e.target.value)}
+            placeholder="e.g. 88000000"
+          />
+{Number(newKeyLimit) > 0 && (
+            <Select
+              label="Auto Reset Interval"
+              options={RESET_INTERVAL_OPTIONS}
+              value={newKeyReset}
+              onChange={(e) => setNewKeyReset(e.target.value)}
+            />
+          )}
+          {Number(newKeyLimit) > 0 && newKeyReset === "custom" && (
+            <Input
+              label="Custom Interval (e.g. 10h, 3d)"
+              value={newKeyCustomReset}
+              onChange={(e) => setNewKeyCustomReset(e.target.value)}
+              placeholder="10h"
+            />
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="RPM Limit (0: unlimited)"
+              type="number"
+              value={newKeyRpm}
+              onChange={(e) => setNewKeyRpm(e.target.value)}
+              placeholder="0"
+              hint="Max requests/min"
+            />
+            <Input
+              label="TPM Limit (0: unlimited)"
+              type="number"
+              value={newKeyTpm}
+              onChange={(e) => setNewKeyTpm(e.target.value)}
+              placeholder="0"
+              hint="Max tokens/min"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-text-main">
+                Allowed Models
+              </label>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="add"
+                onClick={() => {
+                  setPickerTarget("create");
+                  setShowModelPicker(true);
+                }}
+              >
+                Select Models
+              </Button>
+            </div>
+            <Input
+              value={newKeyAllowedModels}
+              onChange={(e) => setNewKeyAllowedModels(e.target.value)}
+              placeholder="* or claude-*, gpt-4o"
+              hint="Use * for all models, or pick models using the button above"
+            />
+            {parseAllowedModelsList(newKeyAllowedModels).length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {parseAllowedModelsList(newKeyAllowedModels).map((m) => (
+                  <span
+                    key={m}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-primary/10 text-primary font-mono text-xs"
+                  >
+                    {m}
+                    <button
+                      type="button"
+                      onClick={() => handleDeselectModelForPicker({ value: m })}
+                      className="hover:text-red-500 transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">close</span>
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <Input
+            label="IP Whitelist (Optional, comma-separated IPs)"
+            value={newKeyIpWhitelist}
+            onChange={(e) => setNewKeyIpWhitelist(e.target.value)}
+            placeholder="e.g. 192.168.1.1, 103.20.10.5 (Leave empty to allow all)"
+            hint="Leave empty to allow access from any IP address"
+          />
+          <div className="flex gap-2 mt-2">
             <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim()}>
               Create
             </Button>
@@ -1101,6 +1370,139 @@ export default function APIPageClient({ machineId }) {
                 setShowAddModal(false);
                 setNewKeyName("");
               }}
+              variant="ghost"
+              fullWidth
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Edit Key Modal */}
+      <Modal
+        isOpen={!!editingKey}
+        title={`Edit API Key: ${editingKey?.name || ""}`}
+        onClose={() => setEditingKey(null)}
+      >
+        <div className="flex flex-col gap-4">
+          <Input
+            label="Key Name"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            placeholder="Production Key"
+          />
+          <Input
+            label="Token Limit (0 for unlimited)"
+            type="number"
+            value={editLimit}
+            onChange={(e) => setEditLimit(e.target.value)}
+            placeholder="e.g. 88000000"
+          />
+{Number(editLimit) > 0 && (
+            <Select
+              label="Auto Reset Interval"
+              options={RESET_INTERVAL_OPTIONS}
+              value={editReset}
+              onChange={(e) => setEditReset(e.target.value)}
+            />
+          )}
+          {Number(editLimit) > 0 && editReset === "custom" && (
+            <Input
+              label="Custom Interval (e.g. 10h, 3d)"
+              value={editCustomReset}
+              onChange={(e) => setEditCustomReset(e.target.value)}
+              placeholder="10h"
+            />
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="RPM Limit (0: unlimited)"
+              type="number"
+              value={editRpm}
+              onChange={(e) => setEditRpm(e.target.value)}
+              placeholder="0"
+              hint="Max requests/min"
+            />
+            <Input
+              label="TPM Limit (0: unlimited)"
+              type="number"
+              value={editTpm}
+              onChange={(e) => setEditTpm(e.target.value)}
+              placeholder="0"
+              hint="Max tokens/min"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-text-main">
+                Allowed Models
+              </label>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="add"
+                onClick={() => {
+                  setPickerTarget("edit");
+                  setShowModelPicker(true);
+                }}
+              >
+                Select Models
+              </Button>
+            </div>
+            <Input
+              value={editAllowedModels}
+              onChange={(e) => setEditAllowedModels(e.target.value)}
+              placeholder="* or claude-*, gpt-4o"
+              hint="Use * for all models, or pick models using the button above"
+            />
+            {parseAllowedModelsList(editAllowedModels).length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {parseAllowedModelsList(editAllowedModels).map((m) => (
+                  <span
+                    key={m}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-primary/10 text-primary font-mono text-xs"
+                  >
+                    {m}
+                    <button
+                      type="button"
+                      onClick={() => handleDeselectModelForPicker({ value: m })}
+                      className="hover:text-red-500 transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">close</span>
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <Input
+            label="IP Whitelist (Optional, comma-separated IPs)"
+            value={editIpWhitelist}
+            onChange={(e) => setEditIpWhitelist(e.target.value)}
+            placeholder="e.g. 192.168.1.1, 103.20.10.5 (Leave empty to allow all)"
+            hint="Leave empty to allow access from any IP address"
+          />
+          <div className="flex gap-2 mt-2">
+            <Button
+              onClick={() => {
+                if (!editingKey) return;
+                handleUpdateKeyQuota(editingKey.id, {
+                  name: editName.trim() || editingKey.name,
+                  tokenLimit: editLimit ? Number(editLimit) : 0,
+                  resetInterval: editReset,
+                  allowedModels: editAllowedModels.trim() || "*",
+                  rpmLimit: editRpm ? Number(editRpm) : 0,
+                  tpmLimit: editTpm ? Number(editTpm) : 0,
+                  ipWhitelist: editIpWhitelist.trim(),
+                });
+              }}
+              fullWidth
+            >
+              Save Changes
+            </Button>
+            <Button
+              onClick={() => setEditingKey(null)}
               variant="ghost"
               fullWidth
             >
@@ -1144,6 +1546,21 @@ export default function APIPageClient({ machineId }) {
           </Button>
         </div>
       </Modal>
+
+      {/* Model Select Modal for API Keys */}
+      {showModelPicker && (
+        <ModelSelectModal
+          isOpen={showModelPicker}
+          onClose={() => setShowModelPicker(false)}
+          onSelect={handleSelectModelForPicker}
+          onDeselect={handleDeselectModelForPicker}
+          activeProviders={activeProviders}
+          modelAliases={modelAliases}
+          title="Select Allowed Models"
+          addedModelValues={parseAllowedModelsList(pickerTarget === "create" ? newKeyAllowedModels : editAllowedModels)}
+          closeOnSelect={false}
+        />
+      )}
 
       {/* Enable Tunnel Modal */}
       <Modal

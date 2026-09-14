@@ -15,7 +15,6 @@ import qoder from "./qoder.js";
 import github from "./github.js";
 import kiro from "./kiro.js";
 import cursor from "./cursor.js";
-import freebuff from "./freebuff.js";
 import kimi from "./kimi.js";
 import kilocode from "./kilocode.js";
 import cline from "./cline.js";
@@ -27,6 +26,8 @@ import kimchi from "./kimchi.js";
 import trae from "./trae.js";
 import windsurf from "./windsurf.js";
 import zed from "./zed.js";
+import freebuff from "./freebuff.js";
+import nous from "./nous.js";
 
 // Provider configurations
 const PROVIDERS = {
@@ -41,7 +42,6 @@ const PROVIDERS = {
   github,
   kiro,
   cursor,
-  freebuff,
   kimi,
   kilocode,
   cline,
@@ -53,6 +53,8 @@ const PROVIDERS = {
   trae,
   windsurf,
   zed,
+  freebuff,
+  nous,
 };
 
 export { PROVIDERS };

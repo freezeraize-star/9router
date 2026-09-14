@@ -1,11 +1,6 @@
 # VCS
 .git
 **/.git
-.github
-
-# Test suites (not needed for the image build)
-tests
-**/tests
 
 # Editor
 .vscode

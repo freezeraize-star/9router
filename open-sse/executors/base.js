@@ -139,6 +139,8 @@ export class BaseExecutor {
 
       try {
         const bodyStr = JSON.stringify(transformedBody);
+        const fetchT0 = Date.now();
+        dbg("FETCH", `${this.provider.toUpperCase()} → ${url} | body=${bodyStr.length}B | connectTimeout=${timeoutMs}ms`);
         const response = await proxyAwareFetch(url, {
           method: "POST",
           headers,
@@ -146,8 +148,20 @@ export class BaseExecutor {
           signal: mergedSignal
         }, proxyOptions);
         clearTimeout(connectTimer);
+        const ct = response.headers?.get?.("content-type") || "";
+        const cl = response.headers?.get?.("content-length") || "?";
+        dbg("FETCH", `${this.provider.toUpperCase()} ← ${response.status} | ttft=${Date.now() - fetchT0}ms | ct=${ct} | cl=${cl}`);
 
         if (await tryRetry(urlIndex, response.status, `status ${response.status}`, response)) { urlIndex--; continue; }
+
+        // Some credentials have more than one valid wire shape and only the
+        // provider knows which one it accepts (Cline: login-minted tokens go raw,
+        // refresh-minted ones need a `workos:` prefix). Subclass hook — absent for
+        // every other provider, so this is a no-op unless opted in. One shot only;
+        // the hook is responsible for not retrying the same shape twice.
+        if (response.status === HTTP_STATUS.UNAUTHORIZED && typeof this.retryAlternativeAuth === "function") {
+          if (await this.retryAlternativeAuth(credentials, log)) { continue; }
+        }
 
         if (this.shouldRetry(response.status, urlIndex)) {
           log?.debug?.("RETRY", `${response.status} on ${url}, trying fallback ${urlIndex + 1}`);

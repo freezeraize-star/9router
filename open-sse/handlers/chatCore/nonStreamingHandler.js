@@ -6,10 +6,12 @@ import { addBufferToUsage, filterUsageForFormat } from "../../utils/usageTrackin
 import { createErrorResult } from "../../utils/error.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
 import { parseSSEToOpenAIResponse } from "./sseToJsonHandler.js";
+import { unwrapClineEnvelope } from "../../shared/clineEnvelope.js";
 import { buildRequestDetail, extractRequestConfig, extractUsageFromResponse, saveUsageStats, formatDoneLine } from "./requestDetail.js";
 import { appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
 import { decloakToolNames } from "../../utils/claudeCloaking.js";
 import { ROLE, RESPONSES_ITEM } from "../../translator/schema/index.js";
+import { saveToSemanticCache } from "../../rtk/semanticCache.js";
 
 function parseToolArguments(value) {
   if (!value) return {};
@@ -136,21 +138,6 @@ function openAICompletionToResponses(responseBody, customToolNames = null) {
       total_tokens: usage.total_tokens || (usage.prompt_tokens || 0) + (usage.completion_tokens || 0),
     },
   };
-}
-
-/**
- * Unwrap gateway envelopes around an OpenAI Chat Completions body.
- * Some OpenAI-compatible gateways wrap the body in a `data` envelope
- * (Cline: {data, success}) — without this, choices/usage don't resolve at
- * top level downstream and surface as "no completion choices".
- * Generic guard, no provider hardcode: only fires when the OpenAI body is
- * nested under `data`.
- */
-export function unwrapDataEnvelope(responseBody) {
-  if (responseBody && !responseBody.choices && responseBody.data?.choices) {
-    return responseBody.data;
-  }
-  return responseBody;
 }
 
 /**
@@ -296,7 +283,7 @@ export function translateNonStreamingResponse(responseBody, targetFormat, source
 /**
  * Handle non-streaming response from provider.
  */
-export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, customToolNames, trackDone, appendLog, pxpipe, reqTag, log }) {
+export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, cacheKeyBody, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, semanticCacheEnabled, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, customToolNames, trackDone, appendLog, pxpipe, reqTag, log }) {
   trackDone();
   const contentType = providerResponse.headers.get("content-type") || "";
   let responseBody;
@@ -317,12 +304,19 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
       console.error(`[ChatCore] Failed to parse JSON from ${provider}:`, err.message);
       return createErrorResult(HTTP_STATUS.BAD_GATEWAY, `Invalid JSON response from ${provider}`);
     }
+    // Cline wraps the OpenAI body in {success, data:{...}}; unwrap so
+    // downstream OpenAI parsing sees choices/usage directly.
+    if (provider === "cline" && responseBody?.data?.choices) {
+      responseBody = responseBody.data;
+    }
   }
 
+  // Unwrap before any consumer reads choices/usage so non-stream clients get a
+  // bare OpenAI body and usage tracking sees data.usage. No-op unless the
+  // provider opts in via transport.quirks.clineEnvelope.
+  responseBody = unwrapClineEnvelope(responseBody, provider);
+
   reqLogger.logProviderResponse(providerResponse.status, providerResponse.statusText, providerResponse.headers, responseBody);
-  // Unwrap AFTER logging (raw envelope stays in the log for forensics) but
-  // BEFORE usage extraction/translation so choices/usage resolve downstream.
-  responseBody = unwrapDataEnvelope(responseBody);
   if (onRequestSuccess) {
     Promise.resolve()
       .then(onRequestSuccess)
@@ -406,6 +400,10 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   }, { endpoint: clientRawRequest?.endpoint || null })).catch(err => {
     console.error("[RequestDetail] Failed to save:", err.message);
   });
+
+  if (semanticCacheEnabled) {
+    saveToSemanticCache(cacheKeyBody || body, `${provider}/${model}`, translatedResponse, apiKey);
+  }
 
   return {
     success: true,

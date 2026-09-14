@@ -26,7 +26,6 @@ product
 # misc
 .DS_Store
 *.pem
-.vscode
 
 # debug
 npm-debug.log*
@@ -61,6 +60,7 @@ PUBLIC.md
 Thanks.md
 PUBLIC.en.md
 PR/*
+package-lock.json
 
 
 #Ignore vscode AI rules
@@ -89,3 +89,4 @@ graphify-out/*
 
 # Kiro local workspace state
 .kiro/
+9router-*

@@ -49,7 +49,8 @@ export function createSSEStream(options = {}) {
     connectionId = null,
     body = null,
     onStreamComplete = null,
-    apiKey = null
+    apiKey = null,
+    credentials = null
   } = options;
 
   let buffer = "";
@@ -59,7 +60,7 @@ export function createSSEStream(options = {}) {
   const decoder = new TextDecoder("utf-8", { fatal: false });
 
   const state = mode === STREAM_MODE.TRANSLATE
-    ? { ...initState(sourceFormat), provider, toolNameMap, customToolNames: new Set(customToolNames || []), model }
+    ? { ...initState(sourceFormat), provider, toolNameMap, customToolNames: new Set(customToolNames || []), model, sessionId: credentials?._clientSessionId || null }
     : null;
 
   let totalContentLength = 0;
@@ -76,6 +77,10 @@ export function createSSEStream(options = {}) {
   let openAIResponsesDoneSent = false;
   let streamDoneSent = false;  // track duplicate [DONE] across transform + flush
   let finalized = false;
+  // Set when a terminal chunk (finish_reason / message_delta) has been emitted. Lets
+  // the transform loop finalize without waiting for [DONE] or flush(): a client that
+  // disconnects right after the finish chunk cancels the reader, and flush() never runs.
+  let terminalChunkSeen = false;
 
   // Usage/logging tail, callable from transform() as well as flush(): a client that
   // closes right after the terminal event cancels the reader, and flush() never runs.
@@ -201,6 +206,7 @@ export function createSSEStream(options = {}) {
               responsesTerminal = isOpenAIResponsesTerminalEvent(currentOpenAIResponsesEvent, parsed);
 
               const isFinishChunk = parsed.choices?.[0]?.finish_reason;
+              if (isFinishChunk) terminalChunkSeen = true;
               if (isFinishChunk && !hasValidUsage(parsed.usage)) {
                 const estimated = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
                 parsed.usage = filterUsageForFormat(estimated, FORMATS.OPENAI);
@@ -236,6 +242,13 @@ export function createSSEStream(options = {}) {
           controller.enqueue(sharedEncoder.encode(output));
           // Responses clients (codex CLI) close on response.completed instead of [DONE]
           if (responsesTerminal) finalizeStream();
+          // Passthrough terminal sentinel. A client that closes right here cancels the
+          // reader, so flush() never runs — finalize now while usage is still in hand.
+          // finalizeStream() is idempotent, so a later flush() cannot double count.
+          if (trimmed === "data: [DONE]" || trimmed === "data:[DONE]" || trimmed === "[DONE]") {
+            streamDoneSent = true;
+            finalizeStream();
+          }
           continue;
         }
 
@@ -275,6 +288,12 @@ export function createSSEStream(options = {}) {
           }
           streamDoneSent = true;
           if (keepsOpenAIResponsesFormat) openAIResponsesDoneSent = true;
+          // The [DONE] sentinel is the last thing a client reads before it hangs up.
+          // A client that closes here cancels the reader, so flush() never runs and the
+          // usage we just accumulated would never be logged or persisted (production saw
+          // ~78% of one provider's tokens lost this way). Finalize now instead.
+          // finalizeStream() is idempotent, so a later flush() cannot double count.
+          finalizeStream();
           continue;
         }
 
@@ -354,6 +373,7 @@ export function createSSEStream(options = {}) {
 
             // Inject estimated usage if finish chunk has no valid usage
             const isFinishChunk = item.type === "message_delta" || item.choices?.[0]?.finish_reason;
+            if (isFinishChunk) terminalChunkSeen = true;
             if (state.finishReason && isFinishChunk && !hasValidUsage(item.usage) && totalContentLength > 0) {
               const estimated = estimateUsage(body, totalContentLength, sourceFormat);
               item.usage = filterUsageForFormat(estimated, sourceFormat); // Filter + already has buffer
@@ -370,10 +390,19 @@ export function createSSEStream(options = {}) {
             sseEmittedCount++;
           }
         }
+
+        // A finished stream that never sends [DONE] (provider cut off, or a client that
+        // only waits for finish_reason): finalize once the terminal chunk has gone out,
+        // so its usage is not lost when the client disconnects instead of flushing.
+        if (terminalChunkSeen) {
+          finalizeStream();
+        }
       }
     },
 
     flush(controller) {
+      const evtSummary = Object.entries(eventTypeCounts).map(([k, v]) => `${k}=${v}`).join(",") || "none";
+      dbg("SSE", `flush | provider=${provider} | model=${model} | recvLines=${sseLineCount} | emitted=${sseEmittedCount} | events=[${evtSummary}]`);
       trackPendingRequest(model, provider, connectionId, false);
       try {
         const remaining = decoder.decode();
@@ -481,11 +510,21 @@ export function createSSEStream(options = {}) {
         console.log("Error in flush:", error);
         finalizeStream();
       }
+    },
+
+    // A client can also leave mid-stream (aborted request, navigation, timeout) — the
+    // reader is cancelled and flush() never runs, so anything accumulated so far would
+    // be dropped. Node does call cancel() in that case (verified), and finalizeStream()
+    // is idempotent, so recording here cannot double count with flush() or the
+    // terminal-marker paths above. Without this, an aborted stream kept the
+    // start-of-stream placeholder row (tokens 0) forever.
+    cancel() {
+      finalizeStream();
     }
   });
 }
 
-export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, customToolNames = null) {
+export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, customToolNames = null, credentials = null) {
   return createSSEStream({
     mode: STREAM_MODE.TRANSLATE,
     targetFormat,
@@ -498,7 +537,8 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
     connectionId,
     body,
     onStreamComplete,
-    apiKey
+    apiKey,
+    credentials
   });
 }
 
