@@ -116,12 +116,12 @@ describe("cline mapTokens — expiry comes from the token, not the payload", () 
       access_token: jwt({ iat, exp: iat + 3600 }),
       refresh_token: "rt-1",
       email: "a@b.c",
-      firstName: "Angga",
-      lastName: "R",
+      firstName: "Free",
+      lastName: "Zez",
     });
     expect(mapped.accessToken).toContain(".");
     expect(mapped.refreshToken).toBe("rt-1");
     expect(mapped.email).toBe("a@b.c");
-    expect(mapped.providerSpecificData).toEqual({ firstName: "Angga", lastName: "R" });
+    expect(mapped.providerSpecificData).toEqual({ firstName: "Free", lastName: "Zez" });
   });
 });
