@@ -89,7 +89,7 @@ export default function MasukClient({ initialAuth }) {
               <circle cx="16" cy="9" r="2" fill="#6366f1"/>
             </svg>
           </div>
-          <h1 className="text-3xl font-bold text-primary mb-2">VansAI</h1>
+          <h1 className="text-3xl font-bold text-primary mb-2">Freezeraize</h1>
           <p className="text-text-muted text-sm">
             {authMode === "oidc" && oidcConfigured
               ? "Masuk dengan OIDC provider untuk mengakses dashboard"
@@ -156,13 +156,8 @@ export default function MasukClient({ initialAuth }) {
                 </Button>
 
                 <p className="text-xs text-center text-text-muted mt-2">
-                  Password default adalah <code className="bg-sidebar px-1 rounded">123456</code>
+                  Password diatur via <code className="bg-sidebar px-1 rounded">.env</code> (INITIAL_PASSWORD)
                 </p>
-                {hasPassword === false && (
-                  <p className="text-xs text-center text-text-muted">
-                    Custom password belum diset. Password default di atas akan berfungsi sampai diganti.
-                  </p>
-                )}
               </form>
             ) : (
               error && <p className="text-xs text-red-500">{error}</p>

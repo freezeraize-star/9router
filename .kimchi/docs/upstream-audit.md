@@ -12,7 +12,7 @@
 
 ## 1. Executive Summary
 
-The `dev` branch of Freezeraize is **173 commits ahead** of upstream `9router/master` and **50 commits behind**. A direct merge is not viable because the fork carries significant custom logic: VansAI branding, Kimchi CLI integration, an ACL enforcement layer, Ponytail/RTK token-saver extensions, a custom Kimchi API-key provider, a dashboard guard with `allowRemoteNoApiKey`, and an in-flight Go porting effort.
+The `dev` branch of Freezeraize is **173 commits ahead** of upstream `9router/master` and **50 commits behind**. A direct merge is not viable because the fork carries significant custom logic: Freezeraize branding, Kimchi CLI integration, an ACL enforcement layer, Ponytail/RTK token-saver extensions, a custom Kimchi API-key provider, a dashboard guard with `allowRemoteNoApiKey`, and an in-flight Go porting effort.
 
 Of the 50 upstream commits reviewed, **12 have already been cherry-picked into `dev`** (mostly with adaptations noted in commit messages). Of the remaining **38 unmerged commits**, the recommended posture is:
 
@@ -179,7 +179,7 @@ Apply these cleanly via cherry-pick or by re-applying the diff. They do not touc
 
 | Upstream | Files | Why adopt |
 |---|---|---|
-| `6e9c7bf4` | `src/app/(dashboard)/dashboard/profile/page.js`<br>`src/app/api/auth/login/route.js`<br>`src/app/api/auth/logout/route.js`<br>`src/app/login/page.js`<br>`src/shared/components/Header.js` | Avoids stale redirects after auth changes. Review for any VansAI branding lines during merge. |
+| `6e9c7bf4` | `src/app/(dashboard)/dashboard/profile/page.js`<br>`src/app/api/auth/login/route.js`<br>`src/app/api/auth/logout/route.js`<br>`src/app/login/page.js`<br>`src/shared/components/Header.js` | Avoids stale redirects after auth changes. Review for any Freezeraize branding lines during merge. |
 | `520f5049` | `src/shared/components/ModelSelectModal.js` | Shows custom provider models in combo picker. |
 | `fc8722e8` | `cli/src/cli/tray/tray.ps1` | DPI-aware Windows tray context menu. |
 | `77b38564` | `public/i18n/literals/zh-CN.json` | Missing zh-CN endpoint key label. |
@@ -282,8 +282,8 @@ These commits contain valuable upstream fixes but overlap with Freezeraize custo
 | Web app version | `0.7.2` | `/media/DiskE/Code/9router-new/package.json` |
 | CLI package name | `@vanroute/freezeraize` | `/media/DiskE/Code/9router-new/cli/package.json` |
 | CLI version | `0.7.2` | `/media/DiskE/Code/9router-new/cli/package.json` |
-| Dashboard title | "VansAI - AI Infrastructure Management" | `/media/DiskE/Code/9router-new/src/app/layout.js` |
-| API welcome message | "Welcome to VansAI!" | `/media/DiskE/Code/9router-new/src/dashboardGuard.js` |
+| Dashboard title | "Freezeraize - AI Infrastructure Management" | `/media/DiskE/Code/9router-new/src/app/layout.js` |
+| API welcome message | "Welcome to Freezeraize!" | `/media/DiskE/Code/9router-new/src/dashboardGuard.js` |
 | Docker image | `ghcr.io/freezeraize-star/Freezeraize:latest` | `/media/DiskE/Code/9router-new/docker-compose.yml` |
 
 ### 7.2 Environment variables

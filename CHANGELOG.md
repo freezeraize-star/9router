@@ -515,7 +515,7 @@ Freezeraize 0.9.55 restores the CLI package scripts for NPM publishing, adopts u
 ## Fixed
 - **Turbopack Dev Server CSS Warn** — Identified and documented the Next.js Turbopack CSS parser bug with Tailwind v4 (hex escape normalization failure on `--shadow-elev` inside `.shadow-[var(...)]`). Provided `npm run dev:webpack` as the recommended workaround for development.
 - **Missing PropTypes in Topology** — Added missing `PropTypes` import in `ProviderTopology.js` to resolve eslint no-undef failures.
-- **VansAI Branding Preservation** — Retained VansAI custom branding over upstream "9Router" logo updates in the topology layout.
+- **Freezeraize Branding Preservation** — Retained Freezeraize custom branding over upstream "9Router" logo updates in the topology layout.
 - **WebP Icon Extension Support** — Configured `ProviderIcon` component to support both PNG and WebP formats dynamically.
 
 # v0.9.51 (2026-07-19)
@@ -559,7 +559,7 @@ Freezeraize 0.9.51 adopts all upstream `freezeraize-star/9router` commits from `
 
 ## Skipped (sengaja tidak diadopsi)
 - Penghapusan ZCode provider — upstream menghapus ZCode; Freezeraize tetap mempertahankannya
-- Restore branding 9Router — upstream mengembalikan label UI 9Router; dilewati untuk menjaga branding VansAI
+- Restore branding 9Router — upstream mengembalikan label UI 9Router; dilewati untuk menjaga branding Freezeraize
 
 # v0.9.5 (2026-07-19)
 

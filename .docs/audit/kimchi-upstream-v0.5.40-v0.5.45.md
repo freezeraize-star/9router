@@ -50,7 +50,7 @@ git diff --name-status v0.5.40..v0.5.45
 
 ## Custom Freezeraize protection matrix
 
-Verified markers/tests remain present for ACL (`isProviderAllowed`, `isComboAllowed`, `isKindAllowed`), ZCode, Kimi/Kimchi parser, NVIDIA coercion, proxy selection, custom OAuth, VansAI branding, `APP_NAME = "9router"`, Docker volume `9router-data`, retry/cooldown, model/capability overrides, and custom-provider connections. Evidence: `agent.md`, `AGENTS.md`, `tests/unit/post-merge-verification.test.js`, focused/full test runs, and source marker scan.
+Verified markers/tests remain present for ACL (`isProviderAllowed`, `isComboAllowed`, `isKindAllowed`), ZCode, Kimi/Kimchi parser, NVIDIA coercion, proxy selection, custom OAuth, Freezeraize branding, `APP_NAME = "9router"`, Docker volume `9router-data`, retry/cooldown, model/capability overrides, and custom-provider connections. Evidence: `agent.md`, `AGENTS.md`, `tests/unit/post-merge-verification.test.js`, focused/full test runs, and source marker scan.
 
 No commit, push, reset, rebase, cherry-pick, or DB-volume mutation was performed.
 
