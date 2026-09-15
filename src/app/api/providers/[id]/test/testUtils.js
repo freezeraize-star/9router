@@ -8,6 +8,7 @@ import {
   refreshProviderCredentials,
   shouldRefreshCredentials,
 } from "open-sse/services/oauthCredentialManager.js";
+import { getAccessToken } from "open-sse/services/tokenRefresh.js";
 import {
   GEMINI_CONFIG,
   ANTIGRAVITY_CONFIG,
@@ -147,6 +148,18 @@ const OAUTH_TEST_CONFIG = {
       402: "Connected, but Grok Build credits are exhausted (spending limit). Add credits or upgrade SuperGrok.",
     },
   },
+  // Nous Portal — OAuth test endpoint.
+  nous: {
+    // Portal device flow. The refresh token rides in the X-Nous-Refresh-Token
+    // header, not the body, so the generic refresh path cannot serve it.
+    // /v1/models is PUBLIC — /api/oauth/account validates: 200 real, 401 bogus.
+    url: "https://portal.nousresearch.com/api/oauth/account",
+    method: "GET",
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    extraHeaders: { Accept: "application/json" },
+    refreshable: true,
+  },
 };
 
 /**
@@ -283,6 +296,14 @@ async function refreshOAuthToken(connection) {
 
     if (provider === "codex" || provider === "grok-cli" || provider === "xai") {
       return await refreshProviderCredentials(provider, connection, console);
+    }
+
+    // Nous Portal mirrors the above: its refresh token is sent in a header, so the
+    // dedicated refreshNousPortalToken handler owns it rather than the shared path.
+    if (provider === "nous") {
+      const tt = await getAccessToken(provider, connection, console);
+      if (!tt) return null;
+      return { accessToken: tt.accessToken, expiresIn: tt.expiresIn, refreshToken: tt.refreshToken || refreshToken };
     }
 
     if (provider === "claude") {

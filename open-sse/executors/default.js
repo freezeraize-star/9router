@@ -2,7 +2,7 @@ import { BaseExecutor } from "./base.js";
 import { PROVIDERS, PROVIDER_OAUTH } from "../config/providers.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 import { OAUTH_ENDPOINTS, buildKimiHeaders } from "../config/appConstants.js";
-import { buildClineHeaders } from "../shared/clineAuth.js";
+import { buildClineHeaders, getAlternateClineToken, clineTokenShape } from "../shared/clineAuth.js";
 import { getCachedClaudeHeaders } from "../utils/claudeHeaderCache.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
@@ -43,7 +43,10 @@ const HEADER_HOOKS = {
   // Stable device_id from OAuth connection (CLIProxyAPI KimiTokenStorage.DeviceID)
   kimiHeaders: (h, c) => Object.assign(h, buildKimiHeaders(c?.providerSpecificData?.deviceId)),
   kimchiHeaders: (h) => { h["User-Agent"] = getKimchiUserAgent(); },
-  clineHeaders: (h, c) => Object.assign(h, buildClineHeaders(c.apiKey || c.accessToken)),
+  // `clineAuthShape` is set by execute() when retrying after a 401, to force the
+  // other token shape (see clineAuth.js: login-minted tokens go raw, refresh-minted
+  // ones need the `workos:` prefix, and the prediction can be wrong).
+  clineHeaders: (h, c) => Object.assign(h, buildClineHeaders(c.apiKey || c.accessToken, {}, { shape: c?.clineAuthShape })),
   kilocodeOrg: (h, c) => { if (c.providerSpecificData?.orgId) h["X-Kilocode-OrganizationID"] = c.providerSpecificData.orgId; },
   claudeOverlay: (h) => {
     const cached = getCachedClaudeHeaders();
@@ -282,10 +285,13 @@ export class DefaultExecutor extends BaseExecutor {
     const rt = credentials?.runtimeTransport;
     const headers = { "Content-Type": "application/json", ...(rt ? rt.headers : this.config.headers) };
     const desc = rt?.auth || AUTH_DESCRIPTORS[this.provider] || this.resolveAuthDescriptor();
-    // Hooks run BEFORE auth so dynamic overlays (claude cached headers) can't clobber the token.
+    // Base auth first, then hooks: a hook exists precisely to refine what the
+    // generic descriptor produced (Cline needs its WorkOS `workos:` token prefix,
+    // Kimi needs its device id), so running hooks first meant applyAuth overwrote
+    // the refinement and the request went out with the raw token.
     const hooks = desc.hooks || desc.apiKey?.hooks || desc.oauth?.hooks || [];
-    for (const hook of hooks) HEADER_HOOKS[hook]?.(headers, credentials);
     applyAuth(headers, desc, credentials);
+    for (const hook of hooks) HEADER_HOOKS[hook]?.(headers, credentials);
 
     // Strip first-party Claude Code identity headers for non-Anthropic anthropic-compatible upstreams
     if (this.provider?.startsWith?.("anthropic-compatible-")) {
@@ -322,6 +328,44 @@ export class DefaultExecutor extends BaseExecutor {
 
     if (stream && !this.config.preserveAccept) headers["Accept"] = "text/event-stream";
     return headers;
+  }
+
+  /**
+   * Cline-only: on a 401, retry once with the token's other wire shape.
+   *
+   * Cline accepts the same access token either bare or with a `workos:` prefix,
+   * and which one works depends on how the token was minted — login-minted goes
+   * bare, refresh-minted needs the prefix. clineAuth.js predicts from the JWT
+   * claims, but a prediction that misses would otherwise cost the account until
+   * someone re-authenticates; the wrong shape answers 401 and the right one 200,
+   * so switching once converts that into a single extra round trip.
+   *
+   * Mutates `credentials.clineAuthShape` as the flag AND to persist the working
+   * choice: the token in the database is the one Cline keeps reissuing, so the
+   * next request starts from the shape that just succeeded instead of re-probing.
+   * Returns false when there is no other shape to try (opaque `clp_` keys, or a
+   * second 401 on the same token) so the caller falls through to normal error
+   * handling.
+   */
+  async retryAlternativeAuth(credentials, log) {
+    if (this.provider !== "cline" && this.provider !== "clinepass") return false;
+
+    const token = credentials?.apiKey || credentials?.accessToken;
+    if (!token) return false;
+
+    // Already switched once for this request — do not loop.
+    if (credentials.clineAuthShape) return false;
+
+    const alternate = getAlternateClineToken(token);
+    if (!alternate) return false;
+
+    const nextShape = clineTokenShape(alternate);
+    credentials.clineAuthShape = nextShape;
+    credentials.accessToken = alternate;
+    if (credentials.apiKey) credentials.apiKey = alternate;
+
+    log?.debug?.("AUTH", `CLINE | 401 on ${clineTokenShape(token)} token, retrying as ${nextShape}`);
+    return true;
   }
 
   // Generic OAuth refresh for the common {grant_type, refresh_token, client_id[, ...]} shape.

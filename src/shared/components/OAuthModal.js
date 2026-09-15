@@ -3,6 +3,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Modal, Button, Input } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { createSuccessHandoff } from "@/shared/utils/oauthSuccessHandoff";
+
+// How long the confirmation screen stays up before the modal hands back to the caller.
+const SUCCESS_SCREEN_MS = 1500;
 
 /**
  * OAuth Modal Component
@@ -36,11 +40,22 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   const callbackProcessingRef = useRef(false);
   const flowIdRef = useRef(0);
   const onSuccessRef = useRef(onSuccess);
+  // Two-phase success handoff: show the confirmation, then notify the caller.
+  const handoffRef = useRef(null);
+  if (handoffRef.current === null) {
+    handoffRef.current = createSuccessHandoff({ delayMs: SUCCESS_SCREEN_MS });
+  }
   useEffect(() => {
     onSuccessRef.current = onSuccess;
   });
 
   // Define all useCallback hooks BEFORE the useEffects that reference them
+
+  // Show the confirmation, then hand back to the caller.
+  const finishAuthentication = useCallback(() => {
+    setStep("success");
+    handoffRef.current.begin(() => onSuccessRef.current?.());
+  }, []);
 
   // Exchange tokens
   const exchangeTokens = useCallback(async (code, state) => {
@@ -63,8 +78,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       if (!res.ok) throw new Error(data.error);
       if (flowId !== flowIdRef.current) return;
 
-      setStep("success");
-      onSuccessRef.current?.();
+      finishAuthentication();
       return true;
     } catch (err) {
       if (flowId !== flowIdRef.current) return false;
@@ -87,8 +101,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       if (!res.ok) throw new Error(data.error);
       if (flowId !== flowIdRef.current || !openedRef.current) return;
 
-      setStep("success");
-      onSuccessRef.current?.();
+      finishAuthentication();
     } catch (err) {
       if (flowId !== flowIdRef.current || !openedRef.current) return;
       setError(err.message);
@@ -136,9 +149,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
 
         if (data.success) {
           pollingAbortRef.current = true; // Stop polling immediately
-          setStep("success");
           setPolling(false);
-          onSuccessRef.current?.();
+          finishAuthentication();
           return;
         }
 
@@ -383,6 +395,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
     } else if (justClosed) {
       flowIdRef.current += 1;
       pollingAbortRef.current = true;
+      // A pending success handoff must not fire into a closed modal.
+      handoffRef.current.cancel();
       openedRef.current = false;
       if (provider === "codex") {
         fetch("/api/oauth/codex/stop-proxy").catch(() => {});
@@ -411,8 +425,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         if (cancelled || callbackProcessedRef.current) return;
         if (data.status === "done") {
           callbackProcessedRef.current = true;
-          setStep("success");
-          onSuccessRef.current?.();
+          finishAuthentication();
           return;
         }
         if (data.status === "error") {
@@ -576,8 +589,16 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
     }
   };
 
+  // A success handoff still in flight must not fire after unmount.
+  useEffect(() => {
+    return () => handoffRef.current.cancel();
+  }, []);
+
   // Clear session on modal close + cleanup proxy
   const handleClose = useCallback(() => {
+    // If the user dismissed the confirmation before the automatic handoff fired, deliver
+    // it now so the caller still learns the flow succeeded.
+    handoffRef.current.commitNow();
     if (provider === "codex") {
       fetch("/api/oauth/codex/stop-proxy").catch(() => {});
     } else if (provider === "xai") {
