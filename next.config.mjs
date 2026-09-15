@@ -14,6 +14,8 @@ const proxyClientMaxBodySize = process.env.NINEROUTER_PROXY_CLIENT_MAX_BODY_SIZE
 const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
   output: "standalone",
+  allowedDevOrigins: ['127.0.0.1', '127.0.0.1:20127', 'localhost', 'localhost:20127', '192.168.10.11', '192.168.10.11:20127'],
+
   serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite", "dompurify", "chalk"],
   turbopack: {
     root: tracingRoot
